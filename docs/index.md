@@ -1,6 +1,6 @@
-# High Performance TCP/UDP Proxy Server
+# 高性能 TCP/UDP 代理服务器
 
-本项目文档站点（VitePress）入口。
+面向 AI 推理场景的高性能代理/负载均衡网关：支持 TCP/UDP 转发、HTTP/1.1（含 keep-alive/chunked）、WebSocket、HTTP/2(h2c)，并提供 GPU/队列/RT 等智能调度、限流与监控能力。
 
 ## 快速入口
 
