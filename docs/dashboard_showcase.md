@@ -4,7 +4,7 @@ title: 监控仪表板展示
 
 # 监控仪表板展示（Dashboard Showcase）
 
-本文档对应 `project.txt`「监控仪表板展示」。
+本页展示内置 Dashboard/Diagnostics 的能力与使用方式。
 
 ## 1. 实时仪表盘 `/dashboard`
 
@@ -36,4 +36,3 @@ title: 监控仪表板展示
 - `http://127.0.0.1:8080/dashboard`
 - `http://127.0.0.1:8080/diagnostics`
 - `http://127.0.0.1:8080/config`
-

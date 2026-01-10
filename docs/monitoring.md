@@ -4,7 +4,7 @@ title: 监控和告警配置指南
 
 # 监控和告警配置指南（Monitoring & Alerts）
 
-本文档对应 `project.txt`「监控和告警配置指南」。
+本页介绍内置监控与告警的配置与使用方式。
 
 ## 1. 监控数据
 
@@ -72,4 +72,3 @@ max_rss_mb = 2048
 max_backend_error_rate = 0.01
 webhook_url = http://127.0.0.1:9009/webhook
 ```
-

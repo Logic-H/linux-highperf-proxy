@@ -35,7 +35,7 @@ export default defineConfig({
         text: "接口与规范",
         items: [
           { text: "API 文档", link: "/api" },
-          { text: "OpenAPI", link: "/openapi.yaml" }
+          { text: "OpenAPI", link: "/openapi" }
         ]
       },
       {

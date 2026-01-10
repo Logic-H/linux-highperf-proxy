@@ -1,6 +1,6 @@
 # 资源使用分析报告（方法与样例）
 
-本文档用于对应 `project.txt` 中“资源使用分析报告”要求。
+本页说明如何解读资源指标（CPU/RSS/FD/流量）并用于定位瓶颈。
 
 ## 1. 指标来源
 
@@ -37,4 +37,3 @@ python3 scripts/benchmark.py --mode epoll --bench connect_hold \
 
 - `bench_results_all.json`：I/O 模型 QPS/延迟对比
 - `bench_conn_hold.json`：连接保持场景的 CPU/RSS/FD 采样
-

@@ -4,7 +4,7 @@ title: 故障诊断手册
 
 # 故障诊断手册（Troubleshooting）
 
-本文档对应 `project.txt`「故障诊断手册」。
+面向线上排障：从“症状”到“定位/缓解/根因”的快速路径。
 
 ## 1. 快速诊断入口
 
@@ -48,4 +48,3 @@ title: 故障诊断手册
 - `audit_log_path`：审计日志路径
 - `stats`：同 `/stats`
 - `history_summary`：历史汇总（如果启用 history）
-

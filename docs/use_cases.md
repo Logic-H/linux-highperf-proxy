@@ -4,7 +4,7 @@ title: 典型使用场景示例
 
 # 典型使用场景示例（Use Cases）
 
-本文档对应 `project.txt`「典型使用场景示例」。
+面向生产使用：按场景给出可直接复用的请求/配置模式。
 
 ## 场景 1：AI 推理服务（模型/版本路由）
 
@@ -52,4 +52,3 @@ curl -N -H 'Accept: text/event-stream' http://127.0.0.1:8080/infer?stream=1
 - 历史：`/history`、`/history/summary`
 - 配置：`/config`
 - 诊断：`/diagnostics`、`/admin/diagnose`、`/admin/logs`
-

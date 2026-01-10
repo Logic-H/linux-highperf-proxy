@@ -4,7 +4,7 @@ title: 核心算法设计文档
 
 # 核心算法设计文档（Algorithms）
 
-本文档对应 `project.txt`「核心算法设计文档」。
+本文档介绍核心调度与负载均衡策略的工作方式、适用场景与配置入口。
 
 ## 1. 负载均衡算法
 
@@ -87,4 +87,3 @@ title: 核心算法设计文档
 - `minBlockBytes` 到 `arenaSizeBytes` 的 2^k 块拆分与合并。
 - 适用：大于 64KB 的大块 Buffer/临时对象。
 - LRU 回收：完全空闲的 arena 超过 `keepArenas` 时按 LRU 释放（降低 RSS）。
-

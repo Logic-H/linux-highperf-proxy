@@ -4,7 +4,7 @@ title: 安装部署指南
 
 # 安装部署指南（多种环境）
 
-本文档对应 `project.txt`「安装部署指南（多种环境）」。
+面向生产环境的安装与运行指南。
 
 ## 1. 开发环境（本机编译运行）
 
@@ -81,4 +81,3 @@ systemctl enable --now proxy_server
 3) 在配置中启用 TLS（`[tls].enable=1`，填入 `cert_path/key_path`）
 
 说明：TLS 监听同端口，代理通过首字节嗅探区分 HTTP 与 TLS ClientHello。
-
