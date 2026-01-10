@@ -8,15 +8,22 @@ build_*/
 *.o
 *.so
 *.a
+docs/.vitepress/dist/
+docs/.vitepress/cache/
 
 # --- Logs & Temporary Outputs ---
 *.log
 *.out
 *.txt
-# Keep project.txt but ignore other txts if necessary. 
+# Keep project.txt but ignore other txts if necessary.
 # However, user likely only has garbage .txt files based on names like asan_out.txt.
 # project.txt is a key file, so we will whitelist it.
 !project.txt
+
+# --- Organized Directories ---
+logs/
+benchmarks/
+debug/
 
 # --- Benchmark Results ---
 bench_*.json
@@ -29,3 +36,6 @@ __pycache__/
 .DS_Store
 .vscode/
 .idea/
+
+# --- Node ---
+node_modules/
