@@ -1,14 +1,10 @@
 # Linux High Performance Proxy Server
 
-[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![C++](https://img.shields.io/badge/C++-17-blue.svg)](https://isocpp.org/)
-[![Platform](https://img.shields.io/badge/platform-Linux-lightgrey.svg)](https://www.linux.org/)
-
 专为智能计算（AI）场景优化的高性能 TCP/UDP 代理服务器，具备智能负载均衡、协议转换、深度监控和安全防护能力。
 
 ---
 
-## 📖 项目概述
+## 项目概述
 
 在智能计算和大数据应用中，网络代理服务器扮演着关键角色：
 - **负载均衡**：将海量 AI 推理请求分发到多台 GPU 服务器
@@ -20,9 +16,9 @@
 
 ---
 
-## ✨ 核心特性
+## 核心特性
 
-### 🔥 高性能网络引擎
+### 高性能网络引擎
 - **多模型 I/O 复用**：支持 `select` / `poll` / `epoll` / `io_uring`，运行时可切换
 - **连接管理优化**：连接池复用、生命周期管理、僵尸连接清理、连接数限制
 - **内存管理优化**：零拷贝技术、内存池（Slab/Buddy）、大页内存支持
@@ -32,7 +28,7 @@
   - **吞吐量**：> 10Gbps（GCP 内网实测 19.21Gbps）
   - **CPU 效率**：10K 并发时 CPU 使用率 < 50%（实测 ~13.8%）
 
-### 🧠 智能负载均衡
+### 智能负载均衡
 - **多种算法**：轮询、最少连接、一致性哈希、响应时间加权（EWMA）、队列长度、GPU 感知
 - **健康检查**：TCP/HTTP 端口检查、自定义脚本、AI 服务检查（GPU 利用率、显存）
 - **服务发现**：静态配置、动态注册、Consul/Etcd/K8s 集成
@@ -42,22 +38,22 @@
   - 预热管理（新节点模型预加载）
   - 模型版本路由（Model@Version）
 
-### 🔌 协议处理
+### 协议处理
 - **HTTP/1.1**：完整支持，包含 keep-alive、chunked 传输
 - **HTTP/2 (h2c)**：多路复用、头部压缩（HPACK）
 - **gRPC**：ProtoBuf 序列化、流式 RPC、HTTP/2 传输
 - **WebSocket**：全双工通信、协议升级
-- **协议转换**：HTTP ↔ gRPC、H2 ↔ H1.1、JSON ↔ ProtoBuf、压缩算法转换
+- **协议转换**：HTTP <-> gRPC、H2 <-> H1.1、JSON <-> ProtoBuf、压缩算法转换
 - **内容处理**：请求/响应修改、流量镜像、API 聚合、缓存集成（Redis/Memcached）
 
-### 🛡️ 安全与监控
+### 安全与监控
 - **访问控制**：IP/CIDR、Token、API Key 白名单
 - **流量防护**：全局限流、按 IP 限流、按接口限流、DDoS 基础防护
 - **审计日志**：访问日志记录（IP、方法、路径、后端、耗时、拒绝原因）
 - **实时告警**：阈值告警、异常检测（EWMA）、多渠道通知（邮件/Webhook/短信）、告警收敛
 - **TLS 终止**：支持 TLS/SSL，集成 ACME HTTP-01 自动证书管理
 
-### 📊 监控与运维
+### 监控与运维
 - **实时仪表盘**：`/dashboard` 可视化关键指标
 - **历史分析**：`/history` 历史数据查询与聚合
 - **统计接口**：`/stats` JSON 格式输出，包含网络、进程、后端、业务指标
@@ -65,7 +61,7 @@
 - **故障诊断**：`/diagnostics` 诊断页、`/admin/logs` 日志查看
 - **插件系统**：插件化架构，支持动态扩展功能
 
-### 🏗️ 架构设计
+### 架构设计
 - **无共享架构**：支持 SO_REUSEPORT 水平扩展
 - **事件驱动**：多线程 Reactor 模型，One Loop Per Thread
 - **高可用**：主从架构、故障自动转移、后端健康检查
@@ -73,7 +69,7 @@
 
 ---
 
-## 🚀 快速开始
+## 快速开始
 
 ### 环境要求
 
@@ -120,7 +116,7 @@ python3 scripts/demo.py
 
 ---
 
-## 📝 配置示例
+## 配置示例
 
 ```ini
 [server]
@@ -156,7 +152,7 @@ stats_port = 8081
 
 ---
 
-## 📊 性能基准
+## 性能基准
 
 ### 内网环境（GCP）
 - **吞吐量**：19.21 Gbps（经 L4 隧道，iperf3 测试）
@@ -173,7 +169,7 @@ stats_port = 8081
 
 ---
 
-## 📚 文档
+## 文档
 
 | 文档 | 说明 |
 |------|------|
@@ -190,7 +186,7 @@ stats_port = 8081
 
 ---
 
-## 🧪 测试
+## 测试
 
 ```bash
 # 运行单元测试
@@ -206,7 +202,7 @@ python3 scripts/benchmark.py --mode epoll --concurrency 10000
 
 ---
 
-## 🤝 贡献指南
+## 贡献指南
 
 欢迎提交 Issue 和 Pull Request！
 
@@ -218,13 +214,13 @@ python3 scripts/benchmark.py --mode epoll --concurrency 10000
 
 ---
 
-## 📄 许可证
+## 许可证
 
 本项目采用 MIT 许可证 - 详见 [LICENSE](LICENSE) 文件。
 
 ---
 
-## 🙏 致谢
+## 致谢
 
 - HAProxy：高性能负载均衡参考实现
 - Linux 内核社区：epoll、io_uring 等网络基础设施
@@ -232,6 +228,6 @@ python3 scripts/benchmark.py --mode epoll --concurrency 10000
 
 ---
 
-## 📧 联系方式
+## 联系方式
 
 如有问题或建议，请通过 [Issues](https://github.com/Logic-H/linux-highperf-proxy/issues) 联系。
