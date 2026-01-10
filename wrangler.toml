@@ -1,0 +1,10 @@
+name = "linux-highperf-proxy"
+main = "workers/serve_assets.ts"
+compatibility_date = "2026-01-10"
+
+[assets]
+directory = "docs/.vitepress/dist"
+binding = "ASSETS"
+
+[env.preview]
+name = "linux-highperf-proxy-preview"

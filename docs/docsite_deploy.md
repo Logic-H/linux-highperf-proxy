@@ -24,6 +24,16 @@ npm run docs:build
 
 若你的站点部署在子路径（例如 `https://example.com/proxy/`），需要在 `docs/.vitepress/config.mts` 设置 `base: "/proxy/"`。
 
+## Cloudflare Workers（Workers Builds，静态资源）
+
+如果你在 Cloudflare 里用的是 **Workers**（而不是 Pages），本仓库已提供 `wrangler.toml`，可把构建产物 `docs/.vitepress/dist/` 作为静态资源发布。
+
+建议在 Workers 的 Git 集成里填写：
+
+- Build command: `npm ci && npm run docs:build`
+- Deploy command (production): `npx wrangler deploy`
+- Version/Preview command (非生产分支，可选): `npx wrangler deploy --env preview`
+
 ## 自己服务器（Nginx）
 
 1) 构建：
@@ -49,4 +59,3 @@ server {
   }
 }
 ```
-
