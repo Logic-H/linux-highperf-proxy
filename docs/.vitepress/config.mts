@@ -18,8 +18,7 @@ export default defineConfig({
         text: "开始",
         items: [
           { text: "安装与运行", link: "/install" },
-          { text: "配置说明", link: "/config" },
-          { text: "部署文档站", link: "/docsite_deploy" }
+          { text: "配置说明", link: "/config" }
         ]
       },
       {

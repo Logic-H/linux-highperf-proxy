@@ -1,6 +1,8 @@
-# 文档站部署（VitePress）
+# 文档站部署（维护者）
 
-本文档站以 `docs/` 作为源目录，构建产物在 `docs/.vitepress/dist/`。
+本文档为维护者/开发者使用，不会出现在文档站导航中。
+
+文档站以 `docs/` 作为源目录，构建产物在 `docs/.vitepress/dist/`。
 
 ## 本地预览
 
@@ -17,16 +19,14 @@ npm run docs:build
 
 ## Cloudflare Pages
 
-在 Cloudflare Pages 新建项目并关联仓库后：
-
 - Build command: `npm run docs:build`
 - Build output directory: `docs/.vitepress/dist`
 
-若你的站点部署在子路径（例如 `https://example.com/proxy/`），需要在 `docs/.vitepress/config.mts` 设置 `base: "/proxy/"`。
+若站点部署在子路径（例如 `https://example.com/proxy/`），需要在 `docs/.vitepress/config.mts` 设置 `base: "/proxy/"`。
 
 ## Cloudflare Workers（Workers Builds，静态资源）
 
-如果你在 Cloudflare 里用的是 **Workers**（而不是 Pages），本仓库已提供 `wrangler.toml`，可把构建产物 `docs/.vitepress/dist/` 作为静态资源发布。
+仓库已提供 `wrangler.toml`，可把构建产物 `docs/.vitepress/dist/` 作为静态资源发布。
 
 建议在 Workers 的 Git 集成里填写：
 
@@ -59,3 +59,4 @@ server {
   }
 }
 ```
+

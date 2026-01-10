@@ -20,8 +20,3 @@
 - [仪表板展示](/dashboard_showcase)
 - [竞品对比](/competitor_benchmark)
 - [Docker 相关](/docker)
-
-## 部署文档站
-
-见 [文档站部署](/docsite_deploy)。
-
