@@ -4,7 +4,7 @@
 - 「API接口文档」
 - 文档规范要求：「API文档：使用 OpenAPI/Swagger 规范」
 
-本项目的 OpenAPI 文件：`docs/openapi.yaml`（建议以该文件为准）。
+本项目的 OpenAPI 文件：`docs/public/openapi.yaml`（建议以该文件为准；站点访问路径为 `/openapi.yaml`）。
 
 ## 1. 监控与可视化
 
