@@ -1,0 +1,331 @@
+openapi: 3.0.3
+info:
+  title: High Performance Proxy Server API
+  version: "0.1.0"
+  description: >
+    Management/observability APIs for the proxy server. Data-plane proxying is not described here.
+servers:
+  - url: http://localhost:8080
+paths:
+  /stats:
+    get:
+      summary: Get runtime stats
+      responses:
+        "200":
+          description: Stats JSON
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+  /dashboard:
+    get:
+      summary: Realtime dashboard HTML
+      responses:
+        "200":
+          description: Dashboard page
+          content:
+            text/html:
+              schema:
+                type: string
+  /history:
+    get:
+      summary: Query history points
+      parameters:
+        - in: query
+          name: seconds
+          schema:
+            type: integer
+            default: 60
+      responses:
+        "200":
+          description: History points JSON
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+  /history/summary:
+    get:
+      summary: Query history summary
+      parameters:
+        - in: query
+          name: seconds
+          schema:
+            type: integer
+            default: 300
+      responses:
+        "200":
+          description: History summary JSON
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+  /config:
+    get:
+      summary: Web config UI
+      responses:
+        "200":
+          description: Config page
+          content:
+            text/html:
+              schema:
+                type: string
+  /admin/config:
+    get:
+      summary: Dump current config snapshot
+      parameters:
+        - in: query
+          name: format
+          schema:
+            type: string
+            enum: [json, ini]
+            default: json
+      responses:
+        "200":
+          description: Config snapshot
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  file:
+                    type: string
+                  settings:
+                    type: object
+                    additionalProperties:
+                      type: object
+                      additionalProperties:
+                        type: string
+            text/plain:
+              schema:
+                type: string
+    post:
+      summary: Update config (in-memory) and optionally persist
+      parameters:
+        - in: query
+          name: format
+          schema:
+            type: string
+            enum: [json, ini]
+            default: json
+        - in: query
+          name: save
+          schema:
+            type: integer
+            enum: [0, 1]
+            default: 0
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                save:
+                  type: integer
+                  enum: [0, 1]
+                updates:
+                  type: array
+                  items:
+                    type: object
+                    required: [section, key, value]
+                    properties:
+                      section:
+                        type: string
+                      key:
+                        type: string
+                      value:
+                        type: string
+                deletes:
+                  type: array
+                  items:
+                    type: object
+                    required: [section, key]
+                    properties:
+                      section:
+                        type: string
+                      key:
+                        type: string
+                delete_sections:
+                  type: array
+                  items:
+                    type: string
+          text/plain:
+            schema:
+              type: string
+      responses:
+        "200":
+          description: Update result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  saved:
+                    type: boolean
+  /diagnostics:
+    get:
+      summary: Diagnostics UI
+      responses:
+        "200":
+          description: Diagnostics page
+          content:
+            text/html:
+              schema:
+                type: string
+  /admin/diagnose:
+    get:
+      summary: Combined diagnose JSON
+      responses:
+        "200":
+          description: Diagnose JSON
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+  /admin/logs:
+    get:
+      summary: Tail logs (audit)
+      parameters:
+        - in: query
+          name: type
+          schema:
+            type: string
+            enum: [audit]
+            default: audit
+        - in: query
+          name: lines
+          schema:
+            type: integer
+            default: 200
+            minimum: 1
+            maximum: 2000
+      responses:
+        "200":
+          description: Log tail text
+          content:
+            text/plain:
+              schema:
+                type: string
+        "404":
+          description: Audit log not enabled
+          content:
+            text/plain:
+              schema:
+                type: string
+  /admin/backend_register:
+    post:
+      summary: Register/update backend
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [ip, port]
+              properties:
+                ip: { type: string }
+                port: { type: integer }
+                weight: { type: integer, default: 1 }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+  /admin/backend_remove:
+    post:
+      summary: Remove backend
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                backend: { type: string }
+                ip: { type: string }
+                port: { type: integer }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+  /admin/backend_online:
+    post:
+      summary: Set backend online/offline
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [backend, online]
+              properties:
+                backend: { type: string }
+                online: { type: integer, enum: [0, 1] }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+  /admin/backend_weight:
+    post:
+      summary: Set backend base weight
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [backend, base_weight]
+              properties:
+                backend: { type: string }
+                base_weight: { type: integer }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+  /admin/backend_metrics:
+    post:
+      summary: Update backend metrics (queue/GPU/VRAM)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [backend]
+              properties:
+                backend: { type: string }
+                queue_len: { type: integer }
+                gpu_util: { type: number, format: float }
+                vram_used_mb: { type: integer }
+                vram_total_mb: { type: integer }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true

@@ -1,0 +1,31 @@
+# --- User Exclusions ---
+AGENTS.md
+GEMINI.md
+
+# --- Build Artifacts ---
+build/
+build_*/
+*.o
+*.so
+*.a
+
+# --- Logs & Temporary Outputs ---
+*.log
+*.out
+*.txt
+# Keep project.txt but ignore other txts if necessary. 
+# However, user likely only has garbage .txt files based on names like asan_out.txt.
+# project.txt is a key file, so we will whitelist it.
+!project.txt
+
+# --- Benchmark Results ---
+bench_*.json
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+
+# --- System/IDE ---
+.DS_Store
+.vscode/
+.idea/

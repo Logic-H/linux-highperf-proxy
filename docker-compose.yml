@@ -1,0 +1,12 @@
+services:
+  proxy:
+    build: .
+    image: highperf-proxy:latest
+    ports:
+      - "8080:8080/tcp"
+      - "8080:8080/udp"
+    volumes:
+      - ./config:/config:ro
+      - ./logs:/logs
+    command: ["-c", "/config/proxy.conf"]
+
