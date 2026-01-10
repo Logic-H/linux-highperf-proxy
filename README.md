@@ -1,4 +1,6 @@
-# Linux High Performance Proxy Server
+# Voro
+
+Voro is a production-grade, high performance TCP/UDP proxy and L7 gateway for AI workloads.
 
 专为智能计算（AI）场景优化的高性能 TCP/UDP 代理服务器，具备智能负载均衡、协议转换、深度监控和安全防护能力。
 

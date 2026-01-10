@@ -3,7 +3,7 @@
 ## Build
 
 ```bash
-docker build -t highperf-proxy:latest .
+docker build -t voro:latest .
 ```
 
 ## Run
@@ -16,7 +16,7 @@ docker run --rm -it \
   -p 8080:8080/udp \
   -v "$PWD/config:/config:ro" \
   -v "$PWD/logs:/logs" \
-  highperf-proxy:latest
+  voro:latest
 ```
 
 ## docker-compose
@@ -24,4 +24,3 @@ docker run --rm -it \
 ```bash
 docker compose up --build
 ```
-

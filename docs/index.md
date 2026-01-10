@@ -1,4 +1,6 @@
-# 高性能 TCP/UDP 代理服务器
+# Voro
+
+生产级高性能 TCP/UDP 代理与 L7 网关。
 
 面向生产环境的高性能代理/负载均衡网关：支持 TCP/UDP 转发、HTTP/1.1（含 keep-alive/chunked）、WebSocket、HTTP/2(h2c)/gRPC，并提供 GPU/队列/响应时间等智能调度、限流与监控告警能力。
 

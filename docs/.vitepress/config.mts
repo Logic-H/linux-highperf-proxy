@@ -1,8 +1,8 @@
 import { defineConfig } from "vitepress";
 
 export default defineConfig({
-  title: "Proxy Server Docs",
-  description: "High Performance TCP/UDP Proxy Server (Linux Assignment)",
+  title: "Voro",
+  description: "Voro is a production-grade high performance TCP/UDP proxy and L7 gateway.",
   lang: "zh-CN",
   lastUpdated: true,
   cleanUrls: true,
