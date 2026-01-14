@@ -4,7 +4,9 @@
 #include <cctype>
 #include <cstring>
 
+#if PROXY_WITH_ZLIB
 #include <zlib.h>
+#endif
 
 namespace proxy {
 namespace protocol {
@@ -25,6 +27,13 @@ Compression::Encoding Compression::ParseContentEncoding(const std::string& v) {
 }
 
 static bool InflateAll(const uint8_t* data, size_t len, int windowBits, std::string* out) {
+#if !PROXY_WITH_ZLIB
+    (void)data;
+    (void)len;
+    (void)windowBits;
+    if (out) out->clear();
+    return false;
+#else
     if (!out) return false;
     out->clear();
     z_stream zs;
@@ -48,9 +57,17 @@ static bool InflateAll(const uint8_t* data, size_t len, int windowBits, std::str
     }
     inflateEnd(&zs);
     return true;
+#endif
 }
 
 static bool DeflateAll(const uint8_t* data, size_t len, int windowBits, std::string* out) {
+#if !PROXY_WITH_ZLIB
+    (void)data;
+    (void)len;
+    (void)windowBits;
+    if (out) out->clear();
+    return false;
+#else
     if (!out) return false;
     out->clear();
     z_stream zs;
@@ -74,6 +91,7 @@ static bool DeflateAll(const uint8_t* data, size_t len, int windowBits, std::str
     }
     deflateEnd(&zs);
     return true;
+#endif
 }
 
 bool Compression::Decompress(Encoding enc, const uint8_t* data, size_t len, std::string* out) {
