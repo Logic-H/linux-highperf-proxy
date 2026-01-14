@@ -1,7 +1,6 @@
 #include "proxy/network/EpollPoller.h"
 #include "proxy/network/PollPoller.h"
 #include "proxy/network/SelectPoller.h"
-#include "proxy/network/UringPoller.h"
 #include "proxy/network/Channel.h"
 #include "proxy/common/Logger.h"
 
@@ -9,6 +8,10 @@
 #include <unistd.h>
 #include <cstring>
 #include <cstdlib>
+
+#if PROXY_WITH_URING
+#include "proxy/network/UringPoller.h"
+#endif
 
 namespace proxy {
 namespace network {
@@ -124,10 +127,17 @@ void EpollPoller::Update(int operation, Channel* channel) {
 }
 
 Poller* Poller::NewDefaultPoller(EventLoop* loop) {
+#if PROXY_WITH_URING
     if (::getenv("PROXY_USE_URING")) {
         LOG_INFO << "Using UringPoller";
         return new UringPoller(loop);
-    } else if (::getenv("PROXY_USE_SELECT")) {
+    }
+#else
+    if (::getenv("PROXY_USE_URING")) {
+        LOG_WARN << "PROXY_USE_URING is set but built without io_uring support (PROXY_WITH_URING=0); falling back.";
+    }
+#endif
+    if (::getenv("PROXY_USE_SELECT")) {
         LOG_INFO << "Using SelectPoller";
         return new SelectPoller(loop);
     } else if (::getenv("PROXY_USE_POLL")) {

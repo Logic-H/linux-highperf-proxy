@@ -203,7 +203,11 @@ std::string Stats::ToJson() {
     ss << "  \"io\": {\n";
     ss << "    \"configured_model\": \"" << configuredIoModel << "\",\n";
     ss << "    \"runtime_model\": \"" << runtimeIoModel << "\",\n";
-    ss << "    \"supported_models\": [\"select\", \"poll\", \"epoll\", \"uring\"]\n";
+    ss << "    \"supported_models\": [\"select\", \"poll\", \"epoll\"";
+#if PROXY_WITH_URING
+    ss << ", \"uring\"";
+#endif
+    ss << "]\n";
     ss << "  },\n";
     
     double qps = (uptime > 0) ? (double)totalRequests_.load() / uptime : 0.0;
