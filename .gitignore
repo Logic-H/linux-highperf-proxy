@@ -19,6 +19,8 @@ docs/.vitepress/cache/
 # However, user likely only has garbage .txt files based on names like asan_out.txt.
 # project.txt is a key file, so we will whitelist it.
 !project.txt
+# CMake uses CMakeLists.txt; do not ignore it.
+!CMakeLists.txt
 
 # --- Organized Directories ---
 logs/
