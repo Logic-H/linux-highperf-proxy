@@ -15,6 +15,9 @@
 #include "proxy/monitor/AccessControl.h"
 #include "proxy/monitor/AuditLogger.h"
 #include "proxy/monitor/PerKeyRateLimiter.h"
+#include "proxy/network/TcpClient.h"
+#include "proxy/network/InetAddress.h"
+#include "proxy/network/Channel.h"
 
 #include <cstring>
 #include <cstdlib>
@@ -184,6 +187,72 @@ static std::string PlainResponse(int code,
         << "\r\n"
         << body;
     return oss.str();
+}
+
+static std::string JsonResponse(int code, const std::string& reason, const std::string& body, bool close = true) {
+    std::ostringstream oss;
+    oss << "HTTP/1.1 " << code << " " << reason << "\r\n"
+        << "Content-Type: application/json\r\n"
+        << "Content-Length: " << body.size() << "\r\n"
+        << "Connection: " << (close ? "close" : "keep-alive") << "\r\n"
+        << "\r\n"
+        << body;
+    return oss.str();
+}
+
+struct HttpUrlTarget {
+    std::string host;
+    uint16_t port{0};
+    std::string path{"/"};
+};
+
+static bool ParseHttpUrl(const std::string& url, HttpUrlTarget* out, std::string* err) {
+    if (!out) return false;
+    std::string u = url;
+    if (u.rfind("http://", 0) == 0) u.erase(0, 7);
+    else {
+        if (err) *err = "only_http_supported";
+        return false;
+    }
+    if (u.empty()) {
+        if (err) *err = "empty_url";
+        return false;
+    }
+    std::string hostport;
+    std::string path = "/";
+    size_t slash = u.find('/');
+    if (slash == std::string::npos) hostport = u;
+    else {
+        hostport = u.substr(0, slash);
+        path = u.substr(slash);
+        if (path.empty()) path = "/";
+    }
+    size_t colon = hostport.rfind(':');
+    if (colon == std::string::npos) {
+        if (err) *err = "missing_port";
+        return false;
+    }
+    std::string host = hostport.substr(0, colon);
+    std::string portStr = hostport.substr(colon + 1);
+    if (host.empty() || portStr.empty()) {
+        if (err) *err = "invalid_hostport";
+        return false;
+    }
+    int port = 0;
+    try {
+        port = std::stoi(portStr);
+    } catch (...) {
+        if (err) *err = "invalid_port";
+        return false;
+    }
+    if (port <= 0 || port > 65535) {
+        if (err) *err = "invalid_port";
+        return false;
+    }
+    out->host = std::move(host);
+    out->port = static_cast<uint16_t>(port);
+    out->path = std::move(path);
+    return true;
 }
 
 static bool isHttp2PrefacePrefix(const char* data, size_t len) {
@@ -429,7 +498,7 @@ static std::string DashboardHtml() {
     <div class="card"><div class="muted">实时 QPS</div><canvas id="c_qps"></canvas></div>
     <div class="card"><div class="muted">活跃连接数</div><canvas id="c_conns"></canvas></div>
     <div class="card"><div class="muted">P99 延迟（ms）</div><canvas id="c_p99"></canvas></div>
-    <div class="card"><div class="muted">CPU 占用（进程总计，100%=1 核）</div><canvas id="c_cpu"></canvas></div>
+    <div class="card"><div class="muted">CPU（单核口径，100%=1 核）</div><canvas id="c_cpu"></canvas></div>
     <div class="card"><div class="muted">流量（近 1s，入/出 KB）</div><canvas id="c_bw"></canvas></div>
     <div class="card"><div class="muted">RSS（MB）</div><canvas id="c_rss"></canvas></div>
     <div class="card"><div class="muted">GPU 利用率（最大，%）</div><canvas id="c_gpu"></canvas></div>
@@ -577,43 +646,67 @@ static std::string DashboardHtml() {
 	      });
 	    }
 
-	    function drawSeries(canvas, ys, opts) {
-	      const ctx = canvas.getContext('2d');
-	      const {w, h, dpr} = fitCanvas(canvas);
-	      ctx.clearRect(0,0,w,h);
-      ctx.fillStyle = '#ffffff';
-      ctx.fillRect(0,0,w,h);
-      const pad = 28;
-      const x0 = pad, y0 = pad, x1 = w - pad, y1 = h - pad;
-      ctx.strokeStyle = '#e5e7eb';
-      ctx.lineWidth = 1;
-      ctx.strokeRect(x0, y0, x1-x0, y1-y0);
-      if (!ys || ys.length === 0) {
-        ctx.fillStyle = '#6b7280';
-        ctx.font = '12px sans-serif';
-        ctx.fillText('暂无数据', x0 + 8, y0 + 18);
-        return;
-      }
-      let ymin = ys[0], ymax = ys[0];
-      for (const v of ys) { if (v < ymin) ymin = v; if (v > ymax) ymax = v; }
-      if (opts && typeof opts.min === 'number') ymin = Math.min(ymin, opts.min);
-      if (opts && typeof opts.max === 'number') ymax = Math.max(ymax, opts.max);
-      if (ymax - ymin < 1e-9) { ymax = ymin + 1; }
-      const n = ys.length;
-      const sx = (n <= 1) ? 1 : (x1 - x0) / (n - 1);
-      const sy = (y1 - y0) / (ymax - ymin);
-      const X = (i) => x0 + i * sx;
-      const Y = (v) => y1 - (v - ymin) * sy;
+		    function drawSeries(canvas, ys, opts) {
+		      const ctx = canvas.getContext('2d');
+		      const {w, h, dpr} = fitCanvas(canvas);
+		      ctx.clearRect(0,0,w,h);
+	      ctx.fillStyle = '#ffffff';
+	      ctx.fillRect(0,0,w,h);
+	      const pad = 28;
+	      const x0 = pad, y0 = pad, x1 = w - pad, y1 = h - pad;
+	      ctx.strokeStyle = '#e5e7eb';
+	      ctx.lineWidth = 1;
+	      ctx.strokeRect(x0, y0, x1-x0, y1-y0);
+	      if (!ys || ys.length === 0) {
+	        ctx.fillStyle = '#6b7280';
+	        ctx.font = '12px sans-serif';
+	        ctx.fillText('暂无数据', x0 + 8, y0 + 18);
+	        return;
+	      }
+	      let ymin = ys[0], ymax = ys[0];
+	      for (const v of ys) { if (v < ymin) ymin = v; if (v > ymax) ymax = v; }
+	      const fixedMin = (opts && typeof opts.fixedMin === 'number') ? opts.fixedMin : null;
+	      const fixedMax = (opts && typeof opts.fixedMax === 'number') ? opts.fixedMax : null;
+	      if (fixedMin !== null && fixedMax !== null) {
+	        ymin = fixedMin;
+	        ymax = fixedMax;
+	      } else {
+	        if (opts && typeof opts.min === 'number') ymin = Math.min(ymin, opts.min);
+	        if (opts && typeof opts.max === 'number') ymax = Math.max(ymax, opts.max);
+	      }
+	      if (ymax - ymin < 1e-9) { ymax = ymin + 1; }
+	      const n = ys.length;
+	      const sx = (n <= 1) ? 1 : (x1 - x0) / (n - 1);
+	      const sy = (y1 - y0) / (ymax - ymin);
+	      const X = (i) => x0 + i * sx;
+	      const Y = (v) => y1 - (v - ymin) * sy;
 
-      ctx.fillStyle = '#6b7280';
-      ctx.font = '11px sans-serif';
-      const fmt = (v) => (Math.abs(v) >= 100 ? String(Math.round(v)) : (Math.round(v*100)/100).toFixed(2));
-      ctx.fillText(fmt(ymax), 6, y0 + 10);
-      ctx.fillText(fmt(ymin), 6, y1);
+	      ctx.fillStyle = '#6b7280';
+	      ctx.font = '11px sans-serif';
+	      const fmt = (v) => (Math.abs(v) >= 100 ? String(Math.round(v)) : (Math.round(v*100)/100).toFixed(2));
+	      // Fixed ticks (GCP-like): if tickStep provided, draw grid + labels at stable positions.
+	      const tickStep = (opts && typeof opts.tickStep === 'number' && opts.tickStep > 0) ? opts.tickStep : null;
+	      if (tickStep) {
+	        ctx.strokeStyle = '#eef2f7';
+	        ctx.lineWidth = 1;
+	        const start = Math.ceil(ymin / tickStep) * tickStep;
+	        for (let v = start; v <= ymax + 1e-9; v += tickStep) {
+	          const py = Y(v);
+	          ctx.beginPath();
+	          ctx.moveTo(x0, py);
+	          ctx.lineTo(x1, py);
+	          ctx.stroke();
+	          ctx.fillStyle = '#6b7280';
+	          ctx.fillText(fmt(v), 6, py + 4);
+	        }
+	      } else {
+	        ctx.fillText(fmt(ymax), 6, y0 + 10);
+	        ctx.fillText(fmt(ymin), 6, y1);
+	      }
 
-      ctx.strokeStyle = (opts && opts.color) ? opts.color : '#2563eb';
-      ctx.lineWidth = 2;
-      ctx.beginPath();
+	      ctx.strokeStyle = (opts && opts.color) ? opts.color : '#2563eb';
+	      ctx.lineWidth = 2;
+	      ctx.beginPath();
       for (let i = 0; i < n; i++) {
         const px = X(i);
         const py = Y(ys[i]);
@@ -625,7 +718,7 @@ static std::string DashboardHtml() {
 	      const last = ys[n-1];
 	      ctx.fillStyle = '#111827';
 	      ctx.font = '12px sans-serif';
-	      ctx.fillText('最新：' + fmt(last), x0 + 8, y0 + 18);
+		      ctx.fillText('最新：' + fmt(last), x0 + 8, y0 + 18);
 
 	      chartMeta[canvas.id] = {
 	        dpr,
@@ -658,6 +751,7 @@ static std::string DashboardHtml() {
     };
 	    let last = { tsMs: 0, totalReq: null, bytesIn: null, bytesOut: null, cpuTimeSec: null };
 	    let tickBusy = false;
+	    let cpuRange = { max: 800, step: 100 };
 
 	    function push(arr, v) {
 	      arr.push(v);
@@ -665,10 +759,10 @@ static std::string DashboardHtml() {
 	    }
 
 	    function renderCharts() {
-	      drawSeries(qs('c_qps'), series.qps, {name:'QPS', color:'#2563eb', min:0, tsMs:series.tsMs});
-	      drawSeries(qs('c_conns'), series.conns, {name:'活跃连接', color:'#16a34a', min:0, tsMs:series.tsMs});
-	      drawSeries(qs('c_p99'), series.p99, {name:'P99', unit:'ms', color:'#9333ea', min:0, tsMs:series.tsMs});
-	      drawSeries(qs('c_cpu'), series.cpu, {name:'CPU', unit:'%', color:'#0f766e', min:0, tsMs:series.tsMs});
+	      drawSeries(qs('c_qps'), series.qps, {name:'QPS', color:'#2563eb', fixedMin:0, fixedMax:20000, tickStep:2000, tsMs:series.tsMs});
+	      drawSeries(qs('c_conns'), series.conns, {name:'活跃连接', color:'#16a34a', fixedMin:0, fixedMax:10000, tickStep:1000, tsMs:series.tsMs});
+	      drawSeries(qs('c_p99'), series.p99, {name:'P99', unit:'ms', color:'#9333ea', fixedMin:0, fixedMax:1000, tickStep:100, tsMs:series.tsMs});
+	      drawSeries(qs('c_cpu'), series.cpu, {name:'CPU', unit:'%', color:'#0f766e', fixedMin:0, fixedMax:cpuRange.max, tickStep:cpuRange.step, tsMs:series.tsMs});
 	      // bandwidth: overlay in/out
 	      (function drawBw(){
 	        const c = qs('c_bw');
@@ -692,8 +786,9 @@ static std::string DashboardHtml() {
 	        }
 	        const vals = a.concat(b);
 	        let ymin = 0, ymax = 0;
-	        for (const v of vals) { if (v > ymax) ymax = v; }
-	        if (ymax - ymin < 1e-9) ymax = ymin + 1;
+	        // fixed bandwidth axis (KB/s)
+	        ymin = 0;
+	        ymax = 200000;
 	        const sx = (n <= 1) ? 1 : (x1 - x0) / (n - 1);
 	        const sy = (y1 - y0) / (ymax - ymin);
 	        const X = (i) => x0 + i * sx;
@@ -701,8 +796,18 @@ static std::string DashboardHtml() {
 	        ctx.fillStyle = '#6b7280';
 	        ctx.font = '11px sans-serif';
 	        const fmt = (v) => (Math.abs(v) >= 100 ? String(Math.round(v)) : (Math.round(v*100)/100).toFixed(2));
-	        ctx.fillText(fmt(ymax), 6, y0 + 10);
-	        ctx.fillText(fmt(ymin), 6, y1);
+	        // fixed ticks every 20000 KB/s
+	        ctx.strokeStyle = '#eef2f7';
+	        ctx.lineWidth = 1;
+	        for (let v = 0; v <= ymax + 1e-9; v += 20000) {
+	          const py = Y(v);
+	          ctx.beginPath();
+	          ctx.moveTo(x0, py);
+	          ctx.lineTo(x1, py);
+	          ctx.stroke();
+	          ctx.fillStyle = '#6b7280';
+	          ctx.fillText(fmt(v), 6, py + 4);
+	        }
 	        function strokeLine(arr, color) {
 	          ctx.strokeStyle = color;
 	          ctx.lineWidth = 2;
@@ -734,10 +839,10 @@ static std::string DashboardHtml() {
 	          ],
 	        };
 	      })();
-	      drawSeries(qs('c_rss'), series.rssMb, {name:'RSS', unit:'MB', color:'#f97316', min:0, tsMs:series.tsMs});
-	      drawSeries(qs('c_gpu'), series.gpuMaxPct, {name:'GPU(最大)', unit:'%', color:'#06b6d4', min:0, max:100, tsMs:series.tsMs});
-	      drawSeries(qs('c_vram'), series.vramMaxPct, {name:'显存(最大)', unit:'%', color:'#0ea5e9', min:0, max:100, tsMs:series.tsMs});
-	      drawSeries(qs('c_queue'), series.queueMax, {name:'队列(最大)', color:'#a855f7', min:0, tsMs:series.tsMs});
+	      drawSeries(qs('c_rss'), series.rssMb, {name:'RSS', unit:'MB', color:'#f97316', fixedMin:0, fixedMax:4096, tickStep:256, tsMs:series.tsMs});
+	      drawSeries(qs('c_gpu'), series.gpuMaxPct, {name:'GPU(最大)', unit:'%', color:'#06b6d4', fixedMin:0, fixedMax:100, tickStep:10, tsMs:series.tsMs});
+	      drawSeries(qs('c_vram'), series.vramMaxPct, {name:'显存(最大)', unit:'%', color:'#0ea5e9', fixedMin:0, fixedMax:100, tickStep:10, tsMs:series.tsMs});
+	      drawSeries(qs('c_queue'), series.queueMax, {name:'队列(最大)', color:'#a855f7', fixedMin:0, fixedMax:1000, tickStep:100, tsMs:series.tsMs});
 	    }
 
     function renderBackends(backends) {
@@ -847,11 +952,24 @@ static std::string DashboardHtml() {
           document.getElementById("lat").textContent = "-";
         }
         document.getElementById("bio").textContent = fmtBytes(j.bytes_in) + " / " + fmtBytes(j.bytes_out);
-        if (j.process) {
-          document.getElementById("proc").textContent = fmtBytes(j.process.rss_bytes) + " / " + fmtNum(j.process.fd_count);
-        } else {
-          document.getElementById("proc").textContent = "-";
-        }
+	        if (j.process) {
+	          document.getElementById("proc").textContent = fmtBytes(j.process.rss_bytes) + " / " + fmtNum(j.process.fd_count);
+	        } else {
+	          document.getElementById("proc").textContent = "-";
+	        }
+	
+	        // CPU range: keep fixed "single-core percent" axis based on detected CPU cores.
+	        if (j.process && typeof j.process.cpu_cores === 'number' && isFinite(j.process.cpu_cores)) {
+	          const cores = Math.max(1, Math.floor(j.process.cpu_cores));
+	          const maxPct = cores * 100;
+	          if (!cpuRange || cpuRange.max !== maxPct) {
+	            let step = 100;
+	            if (maxPct > 800) step = 200;
+	            if (maxPct > 3200) step = 500;
+	            if (maxPct > 6400) step = 1000;
+	            cpuRange = { max: maxPct, step };
+	          }
+	        }
 
 	        // Push chart points only when dt is sane, otherwise rates can spike massively.
 	        if (dtOk) {
@@ -921,6 +1039,7 @@ static std::string ConfigHtml() {
     .row { display:flex; gap:12px; flex-wrap:wrap; }
     .card { border:1px solid #e5e7eb; border-radius:10px; padding:12px; background:#fff; }
     input, button, select { font-size:14px; padding:8px; }
+    textarea { font-size:13px; padding:8px; width:100%; }
     table { border-collapse: collapse; width: 100%; }
     th, td { border-bottom: 1px solid #e5e7eb; text-align:left; padding:8px; font-size:13px; }
     th { color:#6b7280; font-weight:600; }
@@ -950,6 +1069,23 @@ static std::string ConfigHtml() {
         <button onclick="applyOne()">应用</button>
       </div>
     </div>
+    <div class="card" style="min-width:360px; flex:1;">
+      <div class="muted">测试 Webhook（用于告警通道联通性）</div>
+      <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:6px;">
+        <select id="twhich" onchange="pickWebhook()">
+          <option value="webhook_url">alerts.webhook_url</option>
+          <option value="sms_webhook_url">alerts.sms_webhook_url</option>
+          <option value="custom">自定义</option>
+        </select>
+        <input id="turl" placeholder="http://host:port/path" style="flex:1; min-width:260px;">
+        <button onclick="testWebhook()">发送测试</button>
+      </div>
+      <div class="muted" style="margin-top:6px;">仅支持 <code>http://host:port/path</code>，会向目标发一个 JSON POST。</div>
+      <div style="margin-top:8px;">
+        <textarea id="tpayload" rows="4" spellcheck="false"></textarea>
+      </div>
+      <pre id="tresult" style="margin-top:8px;">{}</pre>
+    </div>
   </div>
 
   <h3 style="margin-top:18px;">配置项</h3>
@@ -965,9 +1101,47 @@ static std::string ConfigHtml() {
 
   <script>
     function esc(s){ return String(s).replace(/[&<>\"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;'}[c])); }
+    let lastCfg = null;
+
+    function getAlertVal(k){
+      try {
+        const s = (lastCfg && lastCfg.settings) ? lastCfg.settings : {};
+        const a = s['alerts'] || {};
+        return a[k] || '';
+      } catch (e) { return ''; }
+    }
+
+    function pickWebhook(){
+      const which = document.getElementById('twhich').value;
+      if (which === 'custom') return;
+      const v = getAlertVal(which);
+      document.getElementById('turl').value = v;
+    }
+
+    function defaultPayload(){
+      return JSON.stringify({type:'test', ts_ms: Date.now(), message:'webhook test'}, null, 2);
+    }
+
+    async function testWebhook(){
+      const url = String(document.getElementById('turl').value || '').trim();
+      if (!url) { alert('Webhook URL 为空'); return; }
+      let payload = document.getElementById('tpayload').value;
+      if (!payload) payload = defaultPayload();
+      document.getElementById('tpayload').value = payload;
+      document.getElementById('tresult').textContent = '发送中...';
+      try {
+        const r = await fetch('/admin/test_webhook', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({url, payload})});
+        const j = await r.json();
+        document.getElementById('tresult').textContent = JSON.stringify(j, null, 2);
+      } catch (e) {
+        document.getElementById('tresult').textContent = '错误: ' + String(e);
+      }
+    }
+
     async function loadCfg(){
       const r = await fetch('/admin/config', {cache:'no-store'});
       const j = await r.json();
+      lastCfg = j;
       document.getElementById('raw').textContent = JSON.stringify(j, null, 2);
       document.getElementById('file').textContent = '文件：' + (j.file || '-');
       const tbody = document.getElementById('rows');
@@ -990,6 +1164,8 @@ static std::string ConfigHtml() {
           tbody.appendChild(tr);
         }
       }
+      if (!document.getElementById('tpayload').value) document.getElementById('tpayload').value = defaultPayload();
+      if (!document.getElementById('turl').value) pickWebhook();
     }
     async function updateCfg(section, key, value){
       const save = document.getElementById('save').checked ? 1 : 0;
@@ -1064,7 +1240,7 @@ static std::string HistoryUiHtml() {
     <div class="card"><div class="muted">活跃连接数</div><canvas id="c_conns"></canvas></div>
     <div class="card"><div class="muted">P99 延迟（ms）</div><canvas id="c_p99"></canvas></div>
     <div class="card"><div class="muted">后端错误率（区间）</div><canvas id="c_berr"></canvas></div>
-    <div class="card"><div class="muted">CPU 占用（进程总计，100%=1 核）</div><canvas id="c_cpu"></canvas></div>
+    <div class="card"><div class="muted">CPU（单核口径，100%=1 核）</div><canvas id="c_cpu"></canvas></div>
     <div class="card"><div class="muted">RSS（MB）</div><canvas id="c_rss"></canvas></div>
   </div>
 
@@ -1169,11 +1345,18 @@ static std::string HistoryUiHtml() {
         return;
       }
 
-      let ymin = ys[0], ymax = ys[0];
-      for (const v of ys) { if (v < ymin) ymin = v; if (v > ymax) ymax = v; }
-      if (opts && typeof opts.min === 'number') ymin = Math.min(ymin, opts.min);
-      if (opts && typeof opts.max === 'number') ymax = Math.max(ymax, opts.max);
-      if (ymax - ymin < 1e-9) { ymax = ymin + 1; }
+	      let ymin = ys[0], ymax = ys[0];
+	      for (const v of ys) { if (v < ymin) ymin = v; if (v > ymax) ymax = v; }
+	      const fixedMin = (opts && typeof opts.fixedMin === 'number') ? opts.fixedMin : null;
+	      const fixedMax = (opts && typeof opts.fixedMax === 'number') ? opts.fixedMax : null;
+	      if (fixedMin !== null && fixedMax !== null) {
+	        ymin = fixedMin;
+	        ymax = fixedMax;
+	      } else {
+	        if (opts && typeof opts.min === 'number') ymin = Math.min(ymin, opts.min);
+	        if (opts && typeof opts.max === 'number') ymax = Math.max(ymax, opts.max);
+	      }
+	      if (ymax - ymin < 1e-9) { ymax = ymin + 1; }
 
       const xMin = xs[0], xMax = xs[xs.length - 1];
       const sx = (xMax === xMin) ? 1 : (x1 - x0) / (xMax - xMin);
@@ -1181,12 +1364,28 @@ static std::string HistoryUiHtml() {
       const X = (t) => x0 + (t - xMin) * sx;
       const Y = (v) => y1 - (v - ymin) * sy;
 
-      // Y labels
-      ctx.fillStyle = '#6b7280';
-      ctx.font = '11px sans-serif';
-      const fmt = (v) => (Math.abs(v) >= 100 ? String(Math.round(v)) : (Math.round(v*100)/100).toFixed(2));
-      ctx.fillText(fmt(ymax), 6, y0 + 10);
-      ctx.fillText(fmt(ymin), 6, y1);
+	      // Fixed ticks (GCP-like)
+	      ctx.fillStyle = '#6b7280';
+	      ctx.font = '11px sans-serif';
+	      const fmt = (v) => (Math.abs(v) >= 100 ? String(Math.round(v)) : (Math.round(v*100)/100).toFixed(2));
+	      const tickStep = (opts && typeof opts.tickStep === 'number' && opts.tickStep > 0) ? opts.tickStep : null;
+	      if (tickStep) {
+	        ctx.strokeStyle = '#eef2f7';
+	        ctx.lineWidth = 1;
+	        const start = Math.ceil(ymin / tickStep) * tickStep;
+	        for (let v = start; v <= ymax + 1e-9; v += tickStep) {
+	          const py = Y(v);
+	          ctx.beginPath();
+	          ctx.moveTo(x0, py);
+	          ctx.lineTo(x1, py);
+	          ctx.stroke();
+	          ctx.fillStyle = '#6b7280';
+	          ctx.fillText(fmt(v), 6, py + 4);
+	        }
+	      } else {
+	        ctx.fillText(fmt(ymax), 6, y0 + 10);
+	        ctx.fillText(fmt(ymin), 6, y1);
+	      }
 
       // Line
       ctx.strokeStyle = (opts && opts.color) ? opts.color : '#2563eb';
@@ -1220,11 +1419,11 @@ static std::string HistoryUiHtml() {
 	      };
 	    }
 
-    async function fetchHistory(seconds) {
-      const r = await fetch('/history?seconds=' + encodeURIComponent(seconds), {cache:'no-store'});
-      if (!r.ok) throw new Error('GET /history: ' + r.status);
-      return await r.json();
-    }
+	    async function fetchHistory(seconds) {
+	      const r = await fetch('/history?seconds=' + encodeURIComponent(seconds), {cache:'no-store'});
+	      if (!r.ok) throw new Error('GET /history: ' + r.status);
+	      return await r.json();
+	    }
 
     function getPoints(j) {
       if (!j) return [];
@@ -1232,7 +1431,7 @@ static std::string HistoryUiHtml() {
       return [];
     }
 
-    function extract(points, key, scale) {
+	    function extract(points, key, scale) {
       const xs = [];
       const ys = [];
       for (const p of points) {
@@ -1245,29 +1444,40 @@ static std::string HistoryUiHtml() {
       return {xs, ys};
     }
 
-    async function reload() {
-      clearErr();
-      const seconds = Number(qs('win').value || 300);
-      try {
-        const j = await fetchHistory(seconds);
-        const pts = getPoints(j);
-        qs('meta').textContent = 'points: ' + pts.length;
-        const qps = extract(pts, 'qps');
-        const conns = extract(pts, 'active_connections');
-        const p99 = extract(pts, 'p99_ms');
-        const berr = extract(pts, 'backend_error_rate_interval');
-        const cpu = extract(pts, 'cpu_pct_single_core');
-        const rss = extract(pts, 'rss_bytes', 1/1024/1024);
-	        drawSeries(qs('c_qps'), qps.xs, qps.ys, {name:'QPS', color:'#2563eb', min:0});
-	        drawSeries(qs('c_conns'), conns.xs, conns.ys, {name:'活跃连接', color:'#16a34a', min:0});
-	        drawSeries(qs('c_p99'), p99.xs, p99.ys, {name:'P99', unit:'ms', color:'#9333ea', min:0});
-	        drawSeries(qs('c_berr'), berr.xs, berr.ys, {name:'后端错误率', color:'#dc2626', min:0});
-	        drawSeries(qs('c_cpu'), cpu.xs, cpu.ys, {name:'CPU', unit:'%', color:'#0f766e', min:0});
-	        drawSeries(qs('c_rss'), rss.xs, rss.ys, {name:'RSS', unit:'MB', color:'#f59e0b', min:0});
-      } catch (e) {
-        setErr(e);
-      }
-    }
+	    async function reload() {
+	      clearErr();
+	      const seconds = Number(qs('win').value || 300);
+	      try {
+	        const j = await fetchHistory(seconds);
+	        const pts = getPoints(j);
+	        qs('meta').textContent = 'points: ' + pts.length;
+	        // CPU range (single-core percent): fixed axis based on reported core count.
+	        let cpuMax = 800;
+	        let cpuStep = 100;
+	        if (j && typeof j.cpu_cores === 'number' && isFinite(j.cpu_cores)) {
+	          const cores = Math.max(1, Math.floor(j.cpu_cores));
+	          cpuMax = cores * 100;
+	          cpuStep = 100;
+	          if (cpuMax > 800) cpuStep = 200;
+	          if (cpuMax > 3200) cpuStep = 500;
+	          if (cpuMax > 6400) cpuStep = 1000;
+	        }
+	        const qps = extract(pts, 'qps');
+	        const conns = extract(pts, 'active_connections');
+	        const p99 = extract(pts, 'p99_ms');
+	        const berr = extract(pts, 'backend_error_rate_interval');
+	        const cpu = extract(pts, 'cpu_pct_single_core');
+	        const rss = extract(pts, 'rss_bytes', 1/1024/1024);
+	        drawSeries(qs('c_qps'), qps.xs, qps.ys, {name:'QPS', color:'#2563eb', fixedMin:0, fixedMax:20000, tickStep:2000});
+	        drawSeries(qs('c_conns'), conns.xs, conns.ys, {name:'活跃连接', color:'#16a34a', fixedMin:0, fixedMax:10000, tickStep:1000});
+	        drawSeries(qs('c_p99'), p99.xs, p99.ys, {name:'P99', unit:'ms', color:'#9333ea', fixedMin:0, fixedMax:1000, tickStep:100});
+	        drawSeries(qs('c_berr'), berr.xs, berr.ys, {name:'后端错误率', color:'#dc2626', fixedMin:0, fixedMax:1, tickStep:0.1});
+	        drawSeries(qs('c_cpu'), cpu.xs, cpu.ys, {name:'CPU', unit:'%', color:'#0f766e', fixedMin:0, fixedMax:cpuMax, tickStep:cpuStep});
+	        drawSeries(qs('c_rss'), rss.xs, rss.ys, {name:'RSS', unit:'MB', color:'#f59e0b', fixedMin:0, fixedMax:4096, tickStep:256});
+	      } catch (e) {
+	        setErr(e);
+	      }
+	    }
 
     let timer = null;
     function setAuto(on) {
@@ -3703,6 +3913,151 @@ void ProxyServer::OnMessage(const network::TcpConnectionPtr& conn,
                                            body;
                     conn->Send(response);
                     conn->Shutdown();
+                    return;
+                }
+
+                // Admin endpoint: test a webhook by sending a JSON payload via HTTP POST.
+                // Body: {"url":"http://host:port/path","payload":"{...json...}"}
+                if (req.path() == "/admin/test_webhook") {
+                    if (req.getMethod() != protocol::HttpRequest::kPost) {
+                        conn->Send(PlainResponse(405, "Method Not Allowed", "Use POST"));
+                        conn->Shutdown();
+                        return;
+                    }
+                    const auto urlOpt = ExtractJsonString(req.body(), "url");
+                    if (!urlOpt || urlOpt->empty()) {
+                        conn->Send(JsonResponse(400, "Bad Request", "{\"ok\":false,\"error\":\"missing_url\"}"));
+                        conn->Shutdown();
+                        return;
+                    }
+                    std::string payload;
+                    if (auto p = ExtractJsonString(req.body(), "payload")) payload = *p;
+                    if (payload.empty()) payload = "{}";
+
+                    HttpUrlTarget target;
+                    std::string perr;
+                    if (!ParseHttpUrl(*urlOpt, &target, &perr)) {
+                        const std::string body = std::string("{\"ok\":false,\"error\":\"invalid_url\",\"detail\":\"") +
+                                                 JsonEscape(perr) + "\"}";
+                        conn->Send(JsonResponse(400, "Bad Request", body));
+                        conn->Shutdown();
+                        return;
+                    }
+
+                    struct WebhookTestCtx {
+                        network::TcpConnectionPtr front;
+                        std::shared_ptr<network::TcpClient> client;
+                        std::shared_ptr<network::Channel> timerChannel;
+                        int timerFd{-1};
+                        bool done{false};
+                    };
+                    auto ctx = std::make_shared<WebhookTestCtx>();
+                    ctx->front = conn;
+
+                    auto finish = [ctx](int code, const std::string& jsonBody) {
+                        if (!ctx || ctx->done) return;
+                        ctx->done = true;
+                        if (ctx->timerChannel) {
+                            ctx->timerChannel->DisableAll();
+                            ctx->timerChannel->Remove();
+                            ctx->timerChannel.reset();
+                        }
+                        if (ctx->timerFd >= 0) {
+                            ::close(ctx->timerFd);
+                            ctx->timerFd = -1;
+                        }
+                        if (ctx->client) {
+                            ctx->client->Disconnect();
+                        }
+                        if (ctx->front && ctx->front->connected()) {
+                            const char* reason = "OK";
+                            if (code == 400) reason = "Bad Request";
+                            else if (code == 502) reason = "Bad Gateway";
+                            else if (code == 504) reason = "Gateway Timeout";
+                            else if (code >= 500) reason = "Server Error";
+                            ctx->front->Send(JsonResponse(code, reason, jsonBody));
+                            ctx->front->Shutdown();
+                        }
+                    };
+
+                    // Timeout: 2 seconds.
+                    int tfd = ::timerfd_create(CLOCK_MONOTONIC, TFD_NONBLOCK | TFD_CLOEXEC);
+                    if (tfd >= 0) {
+                        ctx->timerFd = tfd;
+                        struct itimerspec howlong;
+                        bzero(&howlong, sizeof howlong);
+                        howlong.it_value.tv_sec = 2;
+                        howlong.it_value.tv_nsec = 0;
+                        ::timerfd_settime(tfd, 0, &howlong, NULL);
+                        ctx->timerChannel = std::make_shared<proxy::network::Channel>(loop_, tfd);
+                        ctx->timerChannel->SetReadCallback([finish, tfd](std::chrono::system_clock::time_point) mutable {
+                            uint64_t one;
+                            ::read(tfd, &one, sizeof one);
+                            finish(504, "{\"ok\":false,\"error\":\"timeout\"}");
+                        });
+                        ctx->timerChannel->EnableReading();
+                    }
+
+                    const std::string host = target.host;
+                    const uint16_t port = target.port;
+                    const std::string path = target.path;
+                    ctx->client = std::make_shared<network::TcpClient>(loop_, network::InetAddress(host, port), "WebhookTest");
+
+                    ctx->client->SetConnectionCallback([finish, host, port, path, payload](const proxy::network::TcpConnectionPtr& c) mutable {
+                        if (!c->connected()) {
+                            finish(502, "{\"ok\":false,\"error\":\"connect_failed\"}");
+                            return;
+                        }
+                        std::ostringstream req2;
+                        req2 << "POST " << path << " HTTP/1.1\r\n";
+                        req2 << "Host: " << host << ":" << port << "\r\n";
+                        req2 << "Content-Type: application/json\r\n";
+                        req2 << "Content-Length: " << payload.size() << "\r\n";
+                        req2 << "Connection: close\r\n";
+                        req2 << "\r\n";
+                        req2 << payload;
+                        c->Send(req2.str());
+                        c->Shutdown();
+                    });
+
+                    ctx->client->SetMessageCallback([finish](const proxy::network::TcpConnectionPtr&, proxy::network::Buffer* b,
+                                                            std::chrono::system_clock::time_point) mutable {
+                        std::string resp = b->RetrieveAllAsString();
+                        if (resp.empty()) {
+                            finish(502, "{\"ok\":false,\"error\":\"empty_response\"}");
+                            return;
+                        }
+                        std::string statusLine;
+                        int status = 0;
+                        size_t eol = resp.find("\r\n");
+                        if (eol != std::string::npos) statusLine = resp.substr(0, eol);
+                        else statusLine = resp;
+                        // Parse: HTTP/1.1 200 OK
+                        try {
+                            size_t sp1 = statusLine.find(' ');
+                            size_t sp2 = (sp1 != std::string::npos) ? statusLine.find(' ', sp1 + 1) : std::string::npos;
+                            if (sp1 != std::string::npos) {
+                                std::string codeStr = (sp2 != std::string::npos) ? statusLine.substr(sp1 + 1, sp2 - (sp1 + 1))
+                                                                                 : statusLine.substr(sp1 + 1);
+                                status = std::stoi(codeStr);
+                            }
+                        } catch (...) {
+                            status = 0;
+                        }
+                        std::string body = "";
+                        size_t hdrEnd = resp.find("\r\n\r\n");
+                        if (hdrEnd != std::string::npos && hdrEnd + 4 < resp.size()) body = resp.substr(hdrEnd + 4);
+                        if (body.size() > 2048) body = body.substr(0, 2048);
+                        std::ostringstream out;
+                        out << "{\"ok\":true,"
+                            << "\"http_status\":" << status << ","
+                            << "\"status_line\":\"" << JsonEscape(statusLine) << "\","
+                            << "\"body_prefix\":\"" << JsonEscape(body) << "\"}";
+                        finish(200, out.str());
+                    });
+
+                    ctx->client->Connect();
+                    // Response will be sent asynchronously by finish().
                     return;
                 }
 

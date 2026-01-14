@@ -267,7 +267,10 @@ std::string Stats::ToJson() {
     ss << ",\n  \"process\": {\n";
     ss << "    \"rss_bytes\": " << rss << ",\n";
     ss << "    \"fd_count\": " << fds << ",\n";
-    ss << "    \"cpu_time_sec\": " << std::fixed << std::setprecision(3) << cpuTimeSec << ",\n";
+    // Use higher precision to support stable "instant CPU%" from deltas on the dashboard.
+    ss << "    \"cpu_time_sec\": " << std::fixed << std::setprecision(6) << cpuTimeSec << ",\n";
+    const long cpuCores = ::sysconf(_SC_NPROCESSORS_ONLN);
+    ss << "    \"cpu_cores\": " << (cpuCores > 0 ? cpuCores : 1) << ",\n";
     ss << "    \"cpu_pct_single_core_avg\": " << std::fixed << std::setprecision(2) << cpuPct << "\n";
     ss << "  }\n";
 

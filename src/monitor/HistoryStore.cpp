@@ -266,6 +266,8 @@ std::string HistoryStore::PointsLastSecondsJson(int seconds) const {
     std::ostringstream ss;
     ss << "{";
     ss << "\"now_ms\":" << NowMs() << ",";
+    const long cpuCores = ::sysconf(_SC_NPROCESSORS_ONLN);
+    ss << "\"cpu_cores\":" << (cpuCores > 0 ? cpuCores : 1) << ",";
     ss << "\"points\":[";
     for (size_t i = 0; i < pts.size(); ++i) {
         const auto& p = pts[i];
