@@ -29,6 +29,7 @@ debug/
 
 # --- Benchmark Results ---
 bench_*.json
+bench_out/
 
 # --- Python ---
 __pycache__/
