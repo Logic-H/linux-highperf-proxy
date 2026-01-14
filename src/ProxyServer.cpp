@@ -392,6 +392,14 @@ static std::string DashboardHtml() {
     .grid { display:grid; grid-template-columns: 1fr; gap:12px; margin-top:12px; }
     @media (min-width: 900px) { .grid { grid-template-columns: 1fr 1fr; } }
     canvas { width:100%; height:220px; border:1px solid #e5e7eb; border-radius:10px; background:#fff; }
+    table { border-collapse: collapse; width:100%; }
+    th, td { border-bottom:1px solid #e5e7eb; text-align:left; padding:8px; font-size:13px; }
+    th { color:#6b7280; font-weight:600; }
+    .tag { display:inline-block; padding:2px 8px; border-radius:999px; font-size:12px; line-height:18px; }
+    .tag-ok { background:#dcfce7; color:#166534; }
+    .tag-bad { background:#fee2e2; color:#991b1b; }
+    .tag-warn { background:#fef9c3; color:#854d0e; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
     pre { background:#0b1220; color:#d1e7ff; padding:12px; border-radius:10px; overflow:auto; }
     .muted { color:#6b7280; font-size:12px; }
     .badge { display:inline-block; padding:2px 8px; border-radius:999px; background:#eef2ff; color:#3730a3; font-size:12px; }
@@ -421,6 +429,40 @@ static std::string DashboardHtml() {
     <div class="card"><div class="muted">CPU 单核占用（近 1s，%）</div><canvas id="c_cpu"></canvas></div>
     <div class="card"><div class="muted">流量（近 1s，入/出 KB）</div><canvas id="c_bw"></canvas></div>
     <div class="card"><div class="muted">RSS（MB）</div><canvas id="c_rss"></canvas></div>
+    <div class="card"><div class="muted">GPU 利用率（最大，%）</div><canvas id="c_gpu"></canvas></div>
+    <div class="card"><div class="muted">显存占用（最大，%）</div><canvas id="c_vram"></canvas></div>
+    <div class="card"><div class="muted">队列长度（最大）</div><canvas id="c_queue"></canvas></div>
+  </div>
+
+  <h3 style="margin-top:18px;">后端 AI / GPU 指标</h3>
+  <div class="card">
+    <div class="muted">
+      数据来源：
+      <span class="mono">POST /admin/backend_metrics</span> 注入（GPU/显存/队列），
+      <span class="mono">POST /admin/backend_model</span> 注入（模型/版本/是否已加载），
+      或开启配置 <span class="mono">[ai_check].enable=1</span> 由代理主动拉取后端 <span class="mono">/ai/status</span>。
+    </div>
+    <div style="overflow:auto; margin-top:10px;">
+      <table>
+        <thead>
+          <tr>
+            <th>后端</th>
+            <th>健康/在线</th>
+            <th>权重</th>
+            <th>活跃连接</th>
+            <th>队列</th>
+            <th>GPU</th>
+            <th>显存</th>
+            <th>模型</th>
+            <th>版本</th>
+            <th>已加载</th>
+            <th>RT(EWMA ms)</th>
+            <th>错误率</th>
+          </tr>
+        </thead>
+        <tbody id="backend_rows"></tbody>
+      </table>
+    </div>
   </div>
 
   <h3 style="margin-top:18px;">原始 JSON</h3>
@@ -439,6 +481,18 @@ static std::string DashboardHtml() {
       const units = ["B","KB","MB","GB","TB"];
       let i=0; while (n>=1024 && i<units.length-1) { n/=1024; i++; }
       return n.toFixed(i===0?0:2)+" "+units[i];
+    }
+    function fmtPct(x, d) {
+      if (x === null || x === undefined) return "-";
+      x = Number(x);
+      if (!isFinite(x)) return "-";
+      return (d === undefined ? x.toFixed(0) : x.toFixed(d)) + "%";
+    }
+    function fmtMaybe(x, d) {
+      if (x === null || x === undefined) return "-";
+      x = Number(x);
+      if (!isFinite(x)) return "-";
+      return (d === undefined) ? String(x) : x.toFixed(d);
     }
 
     function qs(id){ return document.getElementById(id); }
@@ -511,12 +565,67 @@ static std::string DashboardHtml() {
       bwInKb: [],
       bwOutKb: [],
       rssMb: [],
+      gpuMaxPct: [],
+      vramMaxPct: [],
+      queueMax: [],
     };
     let last = { tsMs: 0, totalReq: null, bytesIn: null, bytesOut: null, cpuTimeSec: null };
 
     function push(arr, v) {
       arr.push(v);
       while (arr.length > MAX_POINTS) arr.shift();
+    }
+
+    function renderBackends(backends) {
+      const tbody = qs('backend_rows');
+      if (!tbody) return;
+      tbody.innerHTML = '';
+      const bs = Array.isArray(backends) ? backends : [];
+      // stable order by id for readability
+      bs.sort((a,b) => String(a.id||'').localeCompare(String(b.id||'')));
+      for (const b of bs) {
+        const id = String(b.id || '-');
+        const healthy = !!b.healthy;
+        const online = !!b.online;
+        const tag = (text, cls) => `<span class="tag ${cls}">${text}</span>`;
+        const st = healthy && online ? tag('正常', 'tag-ok') : (online ? tag('异常', 'tag-bad') : tag('离线', 'tag-warn'));
+        const w = fmtMaybe(b.weight);
+        const ac = fmtMaybe(b.active_connections);
+
+        const q = (b.queue_len_external || typeof b.queue_len === 'number') ? fmtMaybe(b.queue_len) : '-';
+
+        const gpu = b.gpu_present ? fmtPct((Number(b.gpu_util)||0)*100.0, 1) : '未上报';
+        let vram = '未上报';
+        if (b.gpu_present && typeof b.vram_total_mb === 'number' && b.vram_total_mb > 0) {
+          vram = `${fmtMaybe(b.vram_used_mb)}/${fmtMaybe(b.vram_total_mb)} MB`;
+        } else if (b.gpu_present) {
+          vram = `${fmtMaybe(b.vram_used_mb)}/${fmtMaybe(b.vram_total_mb)} MB`;
+        }
+
+        const model = b.model_name_present ? String(b.model_name || '') : '-';
+        const ver = b.model_version_present ? String(b.model_version || '') : '-';
+        let loaded = '-';
+        if (b.model_loaded_present) loaded = b.model_loaded ? '是' : '否';
+
+        const rt = fmtMaybe(b.ewma_response_ms, 3);
+        const er = fmtMaybe(b.error_rate, 6);
+
+        const tr = document.createElement('tr');
+        tr.innerHTML =
+          `<td class="mono">${id}</td>` +
+          `<td>${st}</td>` +
+          `<td>${w}</td>` +
+          `<td>${ac}</td>` +
+          `<td>${q}</td>` +
+          `<td>${gpu}</td>` +
+          `<td>${vram}</td>` +
+          `<td class="mono">${model}</td>` +
+          `<td class="mono">${ver}</td>` +
+          `<td>${loaded}</td>` +
+          `<td>${rt}</td>` +
+          `<td>${er}</td>`;
+        tbody.appendChild(tr);
+      }
     }
 
     async function tick() {
@@ -584,6 +693,27 @@ static std::string DashboardHtml() {
         const rssMb = (j.process && typeof j.process.rss_bytes === 'number') ? (j.process.rss_bytes / 1024.0 / 1024.0) : 0;
         push(series.rssMb, rssMb);
 
+        // backend-derived AI metrics
+        let gpuMax = 0.0;
+        let vramMax = 0.0;
+        let qMax = 0.0;
+        if (Array.isArray(j.backends)) {
+          for (const b of j.backends) {
+            if (b && b.gpu_present && typeof b.gpu_util === 'number' && b.gpu_util >= 0) {
+              gpuMax = Math.max(gpuMax, b.gpu_util * 100.0);
+            }
+            if (b && b.gpu_present && typeof b.vram_total_mb === 'number' && b.vram_total_mb > 0 && typeof b.vram_used_mb === 'number') {
+              vramMax = Math.max(vramMax, (b.vram_used_mb / b.vram_total_mb) * 100.0);
+            }
+            if (b && (b.queue_len_external || typeof b.queue_len === 'number') && typeof b.queue_len === 'number') {
+              qMax = Math.max(qMax, b.queue_len);
+            }
+          }
+        }
+        push(series.gpuMaxPct, gpuMax);
+        push(series.vramMaxPct, vramMax);
+        push(series.queueMax, qMax);
+
         drawSeries(qs('c_qps'), series.qps, {color:'#2563eb', min:0});
         drawSeries(qs('c_conns'), series.conns, {color:'#16a34a', min:0});
         drawSeries(qs('c_p99'), series.p99, {color:'#9333ea', min:0});
@@ -643,6 +773,11 @@ static std::string DashboardHtml() {
           ctx.fillText('最新：入 ' + fmt(lastIn) + ' KB/s，出 ' + fmt(lastOut) + ' KB/s', x0 + 8, y0 + 18);
         })();
         drawSeries(qs('c_rss'), series.rssMb, {color:'#f97316', min:0});
+        drawSeries(qs('c_gpu'), series.gpuMaxPct, {color:'#06b6d4', min:0, max:100});
+        drawSeries(qs('c_vram'), series.vramMaxPct, {color:'#0ea5e9', min:0, max:100});
+        drawSeries(qs('c_queue'), series.queueMax, {color:'#a855f7', min:0});
+
+        renderBackends(j.backends);
 
         document.getElementById("raw").textContent = JSON.stringify(j, null, 2);
       } catch (e) {
@@ -810,7 +945,7 @@ static std::string HistoryUiHtml() {
     <div class="card"><div class="muted">P99 延迟（ms）</div><canvas id="c_p99"></canvas></div>
     <div class="card"><div class="muted">后端错误率（区间）</div><canvas id="c_berr"></canvas></div>
     <div class="card"><div class="muted">CPU 单核占用（区间，%）</div><canvas id="c_cpu"></canvas></div>
-    <div class="card"><div class="muted">RSS (MB)</div><canvas id="c_rss"></canvas></div>
+    <div class="card"><div class="muted">RSS（MB）</div><canvas id="c_rss"></canvas></div>
   </div>
 
   <script>

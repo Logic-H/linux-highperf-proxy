@@ -16,7 +16,14 @@ title: 监控仪表板展示
   - P50/P90/P99 latency
   - Bytes In/Out
   - Process RSS / FD
+  - AI/GPU 指标（后端表格）：GPU 利用率、显存、队列长度、模型名/版本/是否已加载（需要后端上报或开启 AI 检查）
   - Raw JSON（用于快速复制排查）
+
+### AI/GPU 指标数据来源
+
+- 注入指标：`POST /admin/backend_metrics`（GPU/显存/队列）
+- 注入模型状态：`POST /admin/backend_model`（模型/版本/loaded）
+- 主动检查：开启 `[ai_check].enable=1`，代理会对后端拉取 `/ai/status`（后端需提供 JSON）
 
 ## 2. 历史分析 `/history`
 
