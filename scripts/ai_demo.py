@@ -197,17 +197,20 @@ def main():
                 req_id += 1
                 futures.append(ex.submit(worker_one, req_id))
             done = []
-            for f in as_completed(futures, timeout=0.2):
-                done.append(f)
-                try:
-                    backend, dt, model = f.result()
-                    total += 1
-                    by_backend[backend] = by_backend.get(backend, 0) + 1
-                    by_model[model] = by_model.get(model, 0) + 1
-                    lats.append(dt)
-                except Exception:
-                    pass
-            # remove done
+            try:
+                for f in as_completed(futures, timeout=0.2):
+                    done.append(f)
+                    try:
+                        backend, dt, model = f.result()
+                        total += 1
+                        by_backend[backend] = by_backend.get(backend, 0) + 1
+                        by_model[model] = by_model.get(model, 0) + 1
+                        lats.append(dt)
+                    except Exception:
+                        pass
+            except TimeoutError:
+                # no futures completed within this short window; continue filling/polling
+                pass
             if done:
                 done_set = set(done)
                 futures = [x for x in futures if x not in done_set]
