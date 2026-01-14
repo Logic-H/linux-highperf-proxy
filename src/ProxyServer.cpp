@@ -401,11 +401,14 @@ static std::string DashboardHtml() {
     .tag-warn { background:#fef9c3; color:#854d0e; }
     .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
     pre { background:#0b1220; color:#d1e7ff; padding:12px; border-radius:10px; overflow:auto; }
-    .muted { color:#6b7280; font-size:12px; }
-    .badge { display:inline-block; padding:2px 8px; border-radius:999px; background:#eef2ff; color:#3730a3; font-size:12px; }
-    a { color:#2563eb; text-decoration:none; }
-    a:hover { text-decoration:underline; }
-  </style>
+	    .muted { color:#6b7280; font-size:12px; }
+	    .badge { display:inline-block; padding:2px 8px; border-radius:999px; background:#eef2ff; color:#3730a3; font-size:12px; }
+	    a { color:#2563eb; text-decoration:none; }
+	    a:hover { text-decoration:underline; }
+	    .tip { position:fixed; z-index:9999; display:none; pointer-events:none; background:rgba(17,24,39,0.95); color:#fff; padding:6px 8px; border-radius:10px; font-size:12px; box-shadow:0 8px 30px rgba(0,0,0,0.25); }
+	    .tip .t { color:#a7f3d0; }
+	    .tip .k { color:#93c5fd; }
+	  </style>
 </head>
 <body>
   <h2>代理监控仪表盘 <span class="badge">实时</span></h2>
@@ -426,7 +429,7 @@ static std::string DashboardHtml() {
     <div class="card"><div class="muted">实时 QPS</div><canvas id="c_qps"></canvas></div>
     <div class="card"><div class="muted">活跃连接数</div><canvas id="c_conns"></canvas></div>
     <div class="card"><div class="muted">P99 延迟（ms）</div><canvas id="c_p99"></canvas></div>
-    <div class="card"><div class="muted">CPU 单核占用（近 1s，%）</div><canvas id="c_cpu"></canvas></div>
+    <div class="card"><div class="muted">CPU 占用（进程总计，100%=1 核）</div><canvas id="c_cpu"></canvas></div>
     <div class="card"><div class="muted">流量（近 1s，入/出 KB）</div><canvas id="c_bw"></canvas></div>
     <div class="card"><div class="muted">RSS（MB）</div><canvas id="c_rss"></canvas></div>
     <div class="card"><div class="muted">GPU 利用率（最大，%）</div><canvas id="c_gpu"></canvas></div>
@@ -496,19 +499,88 @@ static std::string DashboardHtml() {
     }
 
     function qs(id){ return document.getElementById(id); }
-    function fitCanvas(c) {
-      const dpr = window.devicePixelRatio || 1;
-      const rect = c.getBoundingClientRect();
-      const w = Math.max(10, Math.floor(rect.width * dpr));
-      const h = Math.max(10, Math.floor(rect.height * dpr));
-      if (c.width !== w || c.height !== h) { c.width = w; c.height = h; }
-      return {w, h, dpr};
-    }
+	    function fitCanvas(c) {
+	      const dpr = window.devicePixelRatio || 1;
+	      const rect = c.getBoundingClientRect();
+	      const w = Math.max(10, Math.floor(rect.width * dpr));
+	      const h = Math.max(10, Math.floor(rect.height * dpr));
+	      if (c.width !== w || c.height !== h) { c.width = w; c.height = h; }
+	      return {w, h, dpr};
+	    }
 
-    function drawSeries(canvas, ys, opts) {
-      const ctx = canvas.getContext('2d');
-      const {w, h} = fitCanvas(canvas);
-      ctx.clearRect(0,0,w,h);
+	    const chartMeta = {};
+	    const tip = (function(){
+	      const d = document.createElement('div');
+	      d.className = 'tip';
+	      document.body.appendChild(d);
+	      return d;
+	    })();
+
+	    function fmtTime(ms) {
+	      try {
+	        const d = new Date(ms);
+	        const hh = String(d.getHours()).padStart(2,'0');
+	        const mm = String(d.getMinutes()).padStart(2,'0');
+	        const ss = String(d.getSeconds()).padStart(2,'0');
+	        return `${hh}:${mm}:${ss}`;
+	      } catch (e) {
+	        return String(ms);
+	      }
+	    }
+
+	    function installHover(canvasId) {
+	      const c = qs(canvasId);
+	      if (!c) return;
+	      function hide(){ tip.style.display = 'none'; }
+	      c.addEventListener('mouseleave', hide);
+	      c.addEventListener('mousemove', (ev) => {
+	        const meta = chartMeta[canvasId];
+	        if (!meta || !meta.plot || !meta.n) { hide(); return; }
+	        const rect = c.getBoundingClientRect();
+	        const dpr = meta.dpr || 1;
+	        const mx = (ev.clientX - rect.left) * dpr;
+	        const my = (ev.clientY - rect.top) * dpr;
+	        const {x0,y0,x1,y1} = meta.plot;
+	        if (mx < x0 || mx > x1 || my < y0 || my > y1) { hide(); return; }
+	        const n = meta.n;
+	        const t = (x1 - x0) > 1e-9 ? ((mx - x0) / (x1 - x0)) : 0;
+	        const i = Math.max(0, Math.min(n - 1, Math.round(t * (n - 1))));
+	        let html = '';
+	        const ts = meta.tsRef;
+	        if (ts && ts.length) {
+	          const base = Math.max(0, ts.length - n);
+	          const ms = ts[base + i];
+	          if (typeof ms === 'number') html += `<div class="t">时间：${fmtTime(ms)}</div>`;
+	        }
+	        for (const s of (meta.series || [])) {
+	          const off = s.offset || 0;
+	          const arr = s.ysRef || [];
+	          const j = i - off;
+	          const v = (j >= 0 && j < arr.length) ? arr[j] : null;
+	          const fv = (s.fmtFn) ? s.fmtFn(v) : (v === null || v === undefined ? '-' : String(v));
+	          const unit = s.unit ? (' ' + s.unit) : '';
+	          html += `<div><span class="k">${s.name}：</span>${fv}${unit}</div>`;
+	        }
+	        if (!html) { hide(); return; }
+	        tip.innerHTML = html;
+	        tip.style.display = 'block';
+	        const pad = 12;
+	        let left = ev.clientX + pad;
+	        let top = ev.clientY + pad;
+	        tip.style.left = left + 'px';
+	        tip.style.top = top + 'px';
+	        const bw = tip.getBoundingClientRect();
+	        if (bw.right > window.innerWidth - 8) left = ev.clientX - bw.width - pad;
+	        if (bw.bottom > window.innerHeight - 8) top = ev.clientY - bw.height - pad;
+	        tip.style.left = Math.max(8, left) + 'px';
+	        tip.style.top = Math.max(8, top) + 'px';
+	      });
+	    }
+
+	    function drawSeries(canvas, ys, opts) {
+	      const ctx = canvas.getContext('2d');
+	      const {w, h, dpr} = fitCanvas(canvas);
+	      ctx.clearRect(0,0,w,h);
       ctx.fillStyle = '#ffffff';
       ctx.fillRect(0,0,w,h);
       const pad = 28;
@@ -550,18 +622,33 @@ static std::string DashboardHtml() {
       }
       ctx.stroke();
 
-      const last = ys[n-1];
-      ctx.fillStyle = '#111827';
-      ctx.font = '12px sans-serif';
-      ctx.fillText('最新：' + fmt(last), x0 + 8, y0 + 18);
-    }
+	      const last = ys[n-1];
+	      ctx.fillStyle = '#111827';
+	      ctx.font = '12px sans-serif';
+	      ctx.fillText('最新：' + fmt(last), x0 + 8, y0 + 18);
 
-    const MAX_POINTS = 120;
-    const series = {
-      qps: [],
-      conns: [],
-      p99: [],
-      cpu: [],
+	      chartMeta[canvas.id] = {
+	        dpr,
+	        n,
+	        plot: {x0,y0,x1,y1},
+	        tsRef: (opts && opts.tsMs) ? opts.tsMs : null,
+	        series: [{
+	          name: (opts && opts.name) ? opts.name : '值',
+	          ysRef: ys,
+	          offset: 0,
+	          unit: (opts && opts.unit) ? opts.unit : '',
+	          fmtFn: (v) => (v === null || v === undefined) ? '-' : fmt(v),
+	        }],
+	      };
+	    }
+
+	    const MAX_POINTS = 120;
+	    const series = {
+	      tsMs: [],
+	      qps: [],
+	      conns: [],
+	      p99: [],
+	      cpu: [],
       bwInKb: [],
       bwOutKb: [],
       rssMb: [],
@@ -682,9 +769,10 @@ static std::string DashboardHtml() {
           document.getElementById("proc").textContent = "-";
         }
 
-        // Push chart points.
-        push(series.conns, (typeof j.active_connections === 'number') ? j.active_connections : 0);
-        push(series.qps, (instQps === null) ? 0 : instQps);
+	        // Push chart points.
+	        push(series.tsMs, nowMs);
+	        push(series.conns, (typeof j.active_connections === 'number') ? j.active_connections : 0);
+	        push(series.qps, (instQps === null) ? 0 : instQps);
         const p99 = (j.latency_ms && typeof j.latency_ms.p99_ms === 'number') ? j.latency_ms.p99_ms : 0;
         push(series.p99, p99);
         push(series.cpu, (cpuPct === null) ? 0 : cpuPct);
@@ -714,15 +802,15 @@ static std::string DashboardHtml() {
         push(series.vramMaxPct, vramMax);
         push(series.queueMax, qMax);
 
-        drawSeries(qs('c_qps'), series.qps, {color:'#2563eb', min:0});
-        drawSeries(qs('c_conns'), series.conns, {color:'#16a34a', min:0});
-        drawSeries(qs('c_p99'), series.p99, {color:'#9333ea', min:0});
-        drawSeries(qs('c_cpu'), series.cpu, {color:'#0f766e', min:0});
+	        drawSeries(qs('c_qps'), series.qps, {name:'QPS', color:'#2563eb', min:0, tsMs:series.tsMs});
+	        drawSeries(qs('c_conns'), series.conns, {name:'活跃连接', color:'#16a34a', min:0, tsMs:series.tsMs});
+	        drawSeries(qs('c_p99'), series.p99, {name:'P99', unit:'ms', color:'#9333ea', min:0, tsMs:series.tsMs});
+	        drawSeries(qs('c_cpu'), series.cpu, {name:'CPU', unit:'%', color:'#0f766e', min:0, tsMs:series.tsMs});
         // bandwidth: overlay in/out
-        (function drawBw(){
-          const c = qs('c_bw');
-          const ctx = c.getContext('2d');
-          const {w, h} = fitCanvas(c);
+	        (function drawBw(){
+	          const c = qs('c_bw');
+	          const ctx = c.getContext('2d');
+	          const {w, h, dpr} = fitCanvas(c);
           ctx.clearRect(0,0,w,h);
           ctx.fillStyle = '#ffffff';
           ctx.fillRect(0,0,w,h);
@@ -768,14 +856,25 @@ static std::string DashboardHtml() {
           strokeLine(b, '#ef4444'); // out
           ctx.fillStyle = '#111827';
           ctx.font = '12px sans-serif';
-          const lastIn = a.length ? a[a.length-1] : 0;
-          const lastOut = b.length ? b[b.length-1] : 0;
-          ctx.fillText('最新：入 ' + fmt(lastIn) + ' KB/s，出 ' + fmt(lastOut) + ' KB/s', x0 + 8, y0 + 18);
-        })();
-        drawSeries(qs('c_rss'), series.rssMb, {color:'#f97316', min:0});
-        drawSeries(qs('c_gpu'), series.gpuMaxPct, {color:'#06b6d4', min:0, max:100});
-        drawSeries(qs('c_vram'), series.vramMaxPct, {color:'#0ea5e9', min:0, max:100});
-        drawSeries(qs('c_queue'), series.queueMax, {color:'#a855f7', min:0});
+	          const lastIn = a.length ? a[a.length-1] : 0;
+	          const lastOut = b.length ? b[b.length-1] : 0;
+	          ctx.fillText('最新：入 ' + fmt(lastIn) + ' KB/s，出 ' + fmt(lastOut) + ' KB/s', x0 + 8, y0 + 18);
+
+	          chartMeta[c.id] = {
+	            dpr,
+	            n,
+	            plot: {x0,y0,x1,y1},
+	            tsRef: series.tsMs,
+	            series: [
+	              {name:'入', ysRef:a, offset: Math.max(0, n - a.length), unit:'KB/s', fmtFn: (v) => (v === null || v === undefined) ? '-' : fmt(v)},
+	              {name:'出', ysRef:b, offset: Math.max(0, n - b.length), unit:'KB/s', fmtFn: (v) => (v === null || v === undefined) ? '-' : fmt(v)},
+	            ],
+	          };
+	        })();
+	        drawSeries(qs('c_rss'), series.rssMb, {name:'RSS', unit:'MB', color:'#f97316', min:0, tsMs:series.tsMs});
+	        drawSeries(qs('c_gpu'), series.gpuMaxPct, {name:'GPU(最大)', unit:'%', color:'#06b6d4', min:0, max:100, tsMs:series.tsMs});
+	        drawSeries(qs('c_vram'), series.vramMaxPct, {name:'显存(最大)', unit:'%', color:'#0ea5e9', min:0, max:100, tsMs:series.tsMs});
+	        drawSeries(qs('c_queue'), series.queueMax, {name:'队列(最大)', color:'#a855f7', min:0, tsMs:series.tsMs});
 
         renderBackends(j.backends);
 
@@ -784,10 +883,11 @@ static std::string DashboardHtml() {
         document.getElementById("raw").textContent = "错误: " + String(e);
       }
     }
-    tick();
-    setInterval(tick, 1000);
-    window.addEventListener('resize', () => tick());
-  </script>
+	    tick();
+	    setInterval(tick, 1000);
+	    window.addEventListener('resize', () => tick());
+	    ['c_qps','c_conns','c_p99','c_cpu','c_bw','c_rss','c_gpu','c_vram','c_queue'].forEach(installHover);
+	  </script>
 </body>
 </html>)";
 }
@@ -910,10 +1010,13 @@ static std::string HistoryUiHtml() {
     .muted { color:#6b7280; font-size:12px; }
     .grid { display:grid; grid-template-columns: 1fr; gap:12px; }
     @media (min-width: 900px) { .grid { grid-template-columns: 1fr 1fr; } }
-    .err { color:#b91c1c; }
-    a { color:#2563eb; text-decoration:none; }
-    a:hover { text-decoration:underline; }
-  </style>
+	    .err { color:#b91c1c; }
+	    a { color:#2563eb; text-decoration:none; }
+	    a:hover { text-decoration:underline; }
+	    .tip { position:fixed; z-index:9999; display:none; pointer-events:none; background:rgba(17,24,39,0.95); color:#fff; padding:6px 8px; border-radius:10px; font-size:12px; box-shadow:0 8px 30px rgba(0,0,0,0.25); }
+	    .tip .t { color:#a7f3d0; }
+	    .tip .k { color:#93c5fd; }
+	  </style>
 </head>
 <body>
   <h2>历史监控 <span class="muted">（需开启 [history].enable=1）</span></h2>
@@ -944,27 +1047,93 @@ static std::string HistoryUiHtml() {
     <div class="card"><div class="muted">活跃连接数</div><canvas id="c_conns"></canvas></div>
     <div class="card"><div class="muted">P99 延迟（ms）</div><canvas id="c_p99"></canvas></div>
     <div class="card"><div class="muted">后端错误率（区间）</div><canvas id="c_berr"></canvas></div>
-    <div class="card"><div class="muted">CPU 单核占用（区间，%）</div><canvas id="c_cpu"></canvas></div>
+    <div class="card"><div class="muted">CPU 占用（进程总计，100%=1 核）</div><canvas id="c_cpu"></canvas></div>
     <div class="card"><div class="muted">RSS（MB）</div><canvas id="c_rss"></canvas></div>
   </div>
 
   <script>
-    function setErr(e){ document.getElementById('err').textContent = String(e || ''); }
-    function clearErr(){ setErr(''); }
-    function qs(id){ return document.getElementById(id); }
+	    function setErr(e){ document.getElementById('err').textContent = String(e || ''); }
+	    function clearErr(){ setErr(''); }
+	    function qs(id){ return document.getElementById(id); }
 
-    function fitCanvas(c) {
-      const dpr = window.devicePixelRatio || 1;
-      const rect = c.getBoundingClientRect();
+	    const chartMeta = {};
+	    const tip = (function(){
+	      const d = document.createElement('div');
+	      d.className = 'tip';
+	      document.body.appendChild(d);
+	      return d;
+	    })();
+
+	    function fmtTime(ms) {
+	      try {
+	        const d = new Date(ms);
+	        const hh = String(d.getHours()).padStart(2,'0');
+	        const mm = String(d.getMinutes()).padStart(2,'0');
+	        const ss = String(d.getSeconds()).padStart(2,'0');
+	        return `${hh}:${mm}:${ss}`;
+	      } catch (e) {
+	        return String(ms);
+	      }
+	    }
+
+	    function installHover(canvasId) {
+	      const c = qs(canvasId);
+	      if (!c) return;
+	      function hide(){ tip.style.display = 'none'; }
+	      c.addEventListener('mouseleave', hide);
+	      c.addEventListener('mousemove', (ev) => {
+	        const meta = chartMeta[canvasId];
+	        if (!meta || !meta.plot || !meta.n) { hide(); return; }
+	        const rect = c.getBoundingClientRect();
+	        const dpr = meta.dpr || 1;
+	        const mx = (ev.clientX - rect.left) * dpr;
+	        const my = (ev.clientY - rect.top) * dpr;
+	        const {x0,y0,x1,y1} = meta.plot;
+	        if (mx < x0 || mx > x1 || my < y0 || my > y1) { hide(); return; }
+	        const n = meta.n;
+	        const t = (x1 - x0) > 1e-9 ? ((mx - x0) / (x1 - x0)) : 0;
+	        const i = Math.max(0, Math.min(n - 1, Math.round(t * (n - 1))));
+	        let html = '';
+	        const xs = meta.xsRef;
+	        if (xs && xs.length) {
+	          const ms = xs[i];
+	          if (typeof ms === 'number') html += `<div class="t">时间：${fmtTime(ms)}</div>`;
+	        }
+	        for (const s of (meta.series || [])) {
+	          const arr = s.ysRef || [];
+	          const v = (i >= 0 && i < arr.length) ? arr[i] : null;
+	          const fv = (s.fmtFn) ? s.fmtFn(v) : (v === null || v === undefined ? '-' : String(v));
+	          const unit = s.unit ? (' ' + s.unit) : '';
+	          html += `<div><span class="k">${s.name}：</span>${fv}${unit}</div>`;
+	        }
+	        if (!html) { hide(); return; }
+	        tip.innerHTML = html;
+	        tip.style.display = 'block';
+	        const pad = 12;
+	        let left = ev.clientX + pad;
+	        let top = ev.clientY + pad;
+	        tip.style.left = left + 'px';
+	        tip.style.top = top + 'px';
+	        const bw = tip.getBoundingClientRect();
+	        if (bw.right > window.innerWidth - 8) left = ev.clientX - bw.width - pad;
+	        if (bw.bottom > window.innerHeight - 8) top = ev.clientY - bw.height - pad;
+	        tip.style.left = Math.max(8, left) + 'px';
+	        tip.style.top = Math.max(8, top) + 'px';
+	      });
+	    }
+
+	    function fitCanvas(c) {
+	      const dpr = window.devicePixelRatio || 1;
+	      const rect = c.getBoundingClientRect();
       const w = Math.max(10, Math.floor(rect.width * dpr));
       const h = Math.max(10, Math.floor(rect.height * dpr));
       if (c.width !== w || c.height !== h) { c.width = w; c.height = h; }
       return {w, h, dpr};
     }
 
-    function drawSeries(canvas, xs, ys, opts) {
-      const ctx = canvas.getContext('2d');
-      const {w, h} = fitCanvas(canvas);
+	    function drawSeries(canvas, xs, ys, opts) {
+	      const ctx = canvas.getContext('2d');
+	      const {w, h, dpr} = fitCanvas(canvas);
       ctx.clearRect(0,0,w,h);
       ctx.fillStyle = '#ffffff';
       ctx.fillRect(0,0,w,h);
@@ -1015,11 +1184,24 @@ static std::string HistoryUiHtml() {
       ctx.stroke();
 
       // Last value
-      const last = ys[ys.length - 1];
-      ctx.fillStyle = '#111827';
-      ctx.font = '12px sans-serif';
-      ctx.fillText('last: ' + fmt(last), x0 + 8, y0 + 18);
-    }
+	      const last = ys[ys.length - 1];
+	      ctx.fillStyle = '#111827';
+	      ctx.font = '12px sans-serif';
+	      ctx.fillText('last: ' + fmt(last), x0 + 8, y0 + 18);
+
+	      chartMeta[canvas.id] = {
+	        dpr,
+	        n: Math.min(xs.length, ys.length),
+	        plot: {x0,y0,x1,y1},
+	        xsRef: xs,
+	        series: [{
+	          name: (opts && opts.name) ? opts.name : '值',
+	          ysRef: ys,
+	          unit: (opts && opts.unit) ? opts.unit : '',
+	          fmtFn: (v) => (v === null || v === undefined) ? '-' : fmt(v),
+	        }],
+	      };
+	    }
 
     async function fetchHistory(seconds) {
       const r = await fetch('/history?seconds=' + encodeURIComponent(seconds), {cache:'no-store'});
@@ -1059,12 +1241,12 @@ static std::string HistoryUiHtml() {
         const berr = extract(pts, 'backend_error_rate_interval');
         const cpu = extract(pts, 'cpu_pct_single_core');
         const rss = extract(pts, 'rss_bytes', 1/1024/1024);
-        drawSeries(qs('c_qps'), qps.xs, qps.ys, {color:'#2563eb', min:0});
-        drawSeries(qs('c_conns'), conns.xs, conns.ys, {color:'#16a34a', min:0});
-        drawSeries(qs('c_p99'), p99.xs, p99.ys, {color:'#9333ea', min:0});
-        drawSeries(qs('c_berr'), berr.xs, berr.ys, {color:'#dc2626', min:0});
-        drawSeries(qs('c_cpu'), cpu.xs, cpu.ys, {color:'#0f766e', min:0});
-        drawSeries(qs('c_rss'), rss.xs, rss.ys, {color:'#f59e0b', min:0});
+	        drawSeries(qs('c_qps'), qps.xs, qps.ys, {name:'QPS', color:'#2563eb', min:0});
+	        drawSeries(qs('c_conns'), conns.xs, conns.ys, {name:'活跃连接', color:'#16a34a', min:0});
+	        drawSeries(qs('c_p99'), p99.xs, p99.ys, {name:'P99', unit:'ms', color:'#9333ea', min:0});
+	        drawSeries(qs('c_berr'), berr.xs, berr.ys, {name:'后端错误率', color:'#dc2626', min:0});
+	        drawSeries(qs('c_cpu'), cpu.xs, cpu.ys, {name:'CPU', unit:'%', color:'#0f766e', min:0});
+	        drawSeries(qs('c_rss'), rss.xs, rss.ys, {name:'RSS', unit:'MB', color:'#f59e0b', min:0});
       } catch (e) {
         setErr(e);
       }
@@ -1076,12 +1258,13 @@ static std::string HistoryUiHtml() {
       if (on) timer = setInterval(reload, 2000);
     }
 
-    window.addEventListener('resize', () => reload());
-    qs('win').onchange = reload;
-    qs('auto').onchange = () => setAuto(qs('auto').checked);
-    setAuto(true);
-    reload();
-  </script>
+	    window.addEventListener('resize', () => reload());
+	    qs('win').onchange = reload;
+	    qs('auto').onchange = () => setAuto(qs('auto').checked);
+	    ['c_qps','c_conns','c_p99','c_berr','c_cpu','c_rss'].forEach(installHover);
+	    setAuto(true);
+	    reload();
+	  </script>
 </body>
 </html>)HIS";
 }
