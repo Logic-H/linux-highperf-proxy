@@ -13,7 +13,7 @@ import sys
 import threading
 import time
 import urllib.request
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError as FuturesTimeoutError
 
 
 def http_json(url: str, method: str = "GET", body: bytes | None = None, headers: dict | None = None, timeout: float = 2.0):
@@ -208,7 +208,7 @@ def main():
                         lats.append(dt)
                     except Exception:
                         pass
-            except TimeoutError:
+            except FuturesTimeoutError:
                 # no futures completed within this short window; continue filling/polling
                 pass
             if done:
