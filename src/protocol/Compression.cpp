@@ -27,13 +27,7 @@ Compression::Encoding Compression::ParseContentEncoding(const std::string& v) {
 }
 
 static bool InflateAll(const uint8_t* data, size_t len, int windowBits, std::string* out) {
-#if !PROXY_WITH_ZLIB
-    (void)data;
-    (void)len;
-    (void)windowBits;
-    if (out) out->clear();
-    return false;
-#else
+#if PROXY_WITH_ZLIB
     if (!out) return false;
     out->clear();
     z_stream zs;
@@ -57,17 +51,17 @@ static bool InflateAll(const uint8_t* data, size_t len, int windowBits, std::str
     }
     inflateEnd(&zs);
     return true;
-#endif
-}
-
-static bool DeflateAll(const uint8_t* data, size_t len, int windowBits, std::string* out) {
-#if !PROXY_WITH_ZLIB
+#else
     (void)data;
     (void)len;
     (void)windowBits;
     if (out) out->clear();
     return false;
-#else
+#endif
+}
+
+static bool DeflateAll(const uint8_t* data, size_t len, int windowBits, std::string* out) {
+#if PROXY_WITH_ZLIB
     if (!out) return false;
     out->clear();
     z_stream zs;
@@ -91,6 +85,12 @@ static bool DeflateAll(const uint8_t* data, size_t len, int windowBits, std::str
     }
     deflateEnd(&zs);
     return true;
+#else
+    (void)data;
+    (void)len;
+    (void)windowBits;
+    if (out) out->clear();
+    return false;
 #endif
 }
 
@@ -100,12 +100,17 @@ bool Compression::Decompress(Encoding enc, const uint8_t* data, size_t len, std:
         out->assign(reinterpret_cast<const char*>(data), reinterpret_cast<const char*>(data + len));
         return true;
     }
+#if PROXY_WITH_ZLIB
     if (enc == Encoding::kGzip) {
         return InflateAll(data, len, 16 + MAX_WBITS, out);
     }
     if (enc == Encoding::kDeflate) {
         return InflateAll(data, len, MAX_WBITS, out);
     }
+#else
+    (void)data;
+    (void)len;
+#endif
     return false;
 }
 
@@ -119,12 +124,17 @@ bool Compression::Compress(Encoding enc, const uint8_t* data, size_t len, std::s
         out->assign(reinterpret_cast<const char*>(data), reinterpret_cast<const char*>(data + len));
         return true;
     }
+#if PROXY_WITH_ZLIB
     if (enc == Encoding::kGzip) {
         return DeflateAll(data, len, 16 + MAX_WBITS, out);
     }
     if (enc == Encoding::kDeflate) {
         return DeflateAll(data, len, MAX_WBITS, out);
     }
+#else
+    (void)data;
+    (void)len;
+#endif
     return false;
 }
 
