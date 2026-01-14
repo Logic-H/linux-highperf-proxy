@@ -28,6 +28,17 @@ def http_json(url: str, method: str = "GET", body: bytes | None = None, headers:
     return json.loads(data.decode("utf-8"))
 
 
+def http_text(url: str, method: str = "GET", body: bytes | None = None, headers: dict | None = None, timeout: float = 2.0) -> str:
+    req = urllib.request.Request(url, method=method)
+    if headers:
+        for k, v in headers.items():
+            req.add_header(k, v)
+    if body is not None:
+        req.data = body
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        data = r.read()
+    return data.decode("utf-8", errors="replace")
+
 def wait_http_ok(url: str, timeout_sec: float = 10.0):
     end = time.time() + timeout_sec
     last_err = None
@@ -142,7 +153,13 @@ def main():
     for i in range(args.backend_count):
         port = args.backend_port_base + i + 1
         body = json.dumps({"ip": "127.0.0.1", "port": port, "weight": 1}).encode("utf-8")
-        http_json(f"http://127.0.0.1:{args.proxy_port}/admin/backend_register", method="POST", body=body, headers={"Content-Type": "application/json"})
+        _ = http_text(
+            f"http://127.0.0.1:{args.proxy_port}/admin/backend_register",
+            method="POST",
+            body=body,
+            headers={"Content-Type": "application/json"},
+            timeout=2.0,
+        )
 
     print("已启动演示环境：")
     print(f"- Proxy: http://127.0.0.1:{args.proxy_port}/dashboard")
@@ -220,4 +237,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
