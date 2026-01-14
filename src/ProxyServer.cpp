@@ -646,63 +646,108 @@ static std::string DashboardHtml() {
 	      });
 	    }
 
-		    function drawSeries(canvas, ys, opts) {
-		      const ctx = canvas.getContext('2d');
-		      const {w, h, dpr} = fitCanvas(canvas);
-		      ctx.clearRect(0,0,w,h);
-	      ctx.fillStyle = '#ffffff';
-	      ctx.fillRect(0,0,w,h);
-	      const pad = 28;
-	      const x0 = pad, y0 = pad, x1 = w - pad, y1 = h - pad;
-	      ctx.strokeStyle = '#e5e7eb';
-	      ctx.lineWidth = 1;
-	      ctx.strokeRect(x0, y0, x1-x0, y1-y0);
-	      if (!ys || ys.length === 0) {
-	        ctx.fillStyle = '#6b7280';
-	        ctx.font = '12px sans-serif';
-	        ctx.fillText('暂无数据', x0 + 8, y0 + 18);
-	        return;
-	      }
-	      let ymin = ys[0], ymax = ys[0];
-	      for (const v of ys) { if (v < ymin) ymin = v; if (v > ymax) ymax = v; }
-	      const fixedMin = (opts && typeof opts.fixedMin === 'number') ? opts.fixedMin : null;
-	      const fixedMax = (opts && typeof opts.fixedMax === 'number') ? opts.fixedMax : null;
-	      if (fixedMin !== null && fixedMax !== null) {
-	        ymin = fixedMin;
-	        ymax = fixedMax;
-	      } else {
-	        if (opts && typeof opts.min === 'number') ymin = Math.min(ymin, opts.min);
-	        if (opts && typeof opts.max === 'number') ymax = Math.max(ymax, opts.max);
-	      }
-	      if (ymax - ymin < 1e-9) { ymax = ymin + 1; }
-	      const n = ys.length;
-	      const sx = (n <= 1) ? 1 : (x1 - x0) / (n - 1);
-	      const sy = (y1 - y0) / (ymax - ymin);
-	      const X = (i) => x0 + i * sx;
-	      const Y = (v) => y1 - (v - ymin) * sy;
+			    function drawSeries(canvas, ys, opts) {
+			      const ctx = canvas.getContext('2d');
+			      const {w, h, dpr} = fitCanvas(canvas);
+			      ctx.clearRect(0,0,w,h);
+		      ctx.fillStyle = '#ffffff';
+		      ctx.fillRect(0,0,w,h);
+		      const basePad = 28;
+		      if (!ys || ys.length === 0) {
+		        const x0 = basePad, y0 = basePad;
+		        ctx.strokeStyle = '#e5e7eb';
+		        ctx.lineWidth = 1;
+		        ctx.strokeRect(x0, y0, w - 2*basePad, h - 2*basePad);
+		        ctx.fillStyle = '#6b7280';
+		        ctx.font = '12px sans-serif';
+		        ctx.fillText('暂无数据', x0 + 8, y0 + 18);
+		        return;
+		      }
 
-	      ctx.fillStyle = '#6b7280';
-	      ctx.font = '11px sans-serif';
-	      const fmt = (v) => (Math.abs(v) >= 100 ? String(Math.round(v)) : (Math.round(v*100)/100).toFixed(2));
-	      // Fixed ticks (GCP-like): if tickStep provided, draw grid + labels at stable positions.
-	      const tickStep = (opts && typeof opts.tickStep === 'number' && opts.tickStep > 0) ? opts.tickStep : null;
-	      if (tickStep) {
-	        ctx.strokeStyle = '#eef2f7';
-	        ctx.lineWidth = 1;
-	        const start = Math.ceil(ymin / tickStep) * tickStep;
-	        for (let v = start; v <= ymax + 1e-9; v += tickStep) {
-	          const py = Y(v);
-	          ctx.beginPath();
-	          ctx.moveTo(x0, py);
-	          ctx.lineTo(x1, py);
-	          ctx.stroke();
-	          ctx.fillStyle = '#6b7280';
-	          ctx.fillText(fmt(v), 6, py + 4);
-	        }
-	      } else {
-	        ctx.fillText(fmt(ymax), 6, y0 + 10);
-	        ctx.fillText(fmt(ymin), 6, y1);
-	      }
+		      function fmtAxis(v) {
+		        v = Number(v);
+		        if (!isFinite(v)) return '-';
+		        const a = Math.abs(v);
+		        if (a >= 1e9) return (v/1e9).toFixed(a >= 1e10 ? 0 : 1) + 'G';
+		        if (a >= 1e6) return (v/1e6).toFixed(a >= 1e7 ? 0 : 1) + 'M';
+		        if (a >= 1e3) return (v/1e3).toFixed(a >= 1e4 ? 0 : 1) + 'k';
+		        if (a >= 100) return String(Math.round(v));
+		        if (a >= 10) return (Math.round(v * 10) / 10).toFixed(1);
+		        if (a >= 1) return (Math.round(v * 100) / 100).toFixed(2);
+		        return (Math.round(v * 1000) / 1000).toFixed(3);
+		      }
+
+		      let ymin = ys[0], ymax = ys[0];
+		      for (const v of ys) { if (v < ymin) ymin = v; if (v > ymax) ymax = v; }
+		      const fixedMin = (opts && typeof opts.fixedMin === 'number') ? opts.fixedMin : null;
+		      const fixedMax = (opts && typeof opts.fixedMax === 'number') ? opts.fixedMax : null;
+		      if (fixedMin !== null && fixedMax !== null) {
+		        ymin = fixedMin;
+		        ymax = fixedMax;
+		      } else {
+		        if (opts && typeof opts.min === 'number') ymin = Math.min(ymin, opts.min);
+		        if (opts && typeof opts.max === 'number') ymax = Math.max(ymax, opts.max);
+		      }
+		      if (ymax - ymin < 1e-9) { ymax = ymin + 1; }
+
+		      const tickStep = (opts && typeof opts.tickStep === 'number' && opts.tickStep > 0) ? opts.tickStep : null;
+		      const ticks = [];
+		      if (tickStep) {
+		        const start = Math.ceil(ymin / tickStep) * tickStep;
+		        for (let v = start; v <= ymax + 1e-9; v += tickStep) ticks.push(v);
+		      } else {
+		        ticks.push(ymin);
+		        if (ymax !== ymin) ticks.push(ymax);
+		      }
+
+		      ctx.font = '11px sans-serif';
+		      let maxW = 0;
+		      for (const v of ticks) maxW = Math.max(maxW, ctx.measureText(fmtAxis(v)).width);
+		      const leftPad = Math.max(basePad, Math.ceil(maxW) + 14);
+
+		      const x0 = leftPad, y0 = basePad, x1 = w - basePad, y1 = h - basePad;
+		      ctx.strokeStyle = '#e5e7eb';
+		      ctx.lineWidth = 1;
+		      ctx.strokeRect(x0, y0, x1-x0, y1-y0);
+
+		      const n = ys.length;
+		      const sx = (n <= 1) ? 1 : (x1 - x0) / (n - 1);
+		      const sy = (y1 - y0) / (ymax - ymin);
+		      const X = (i) => x0 + i * sx;
+		      const Y = (v) => y1 - (v - ymin) * sy;
+
+		      // Fixed ticks (GCP-like): stable steps + grid; avoid label overlap.
+		      if (tickStep) {
+		        ctx.strokeStyle = '#eef2f7';
+		        ctx.lineWidth = 1;
+		        ctx.fillStyle = '#6b7280';
+		        ctx.textAlign = 'right';
+		        ctx.textBaseline = 'middle';
+		        let lastY = -1e18;
+		        const minSep = 14 * dpr;
+		        for (const v of ticks) {
+		          const py = Y(v);
+		          if (py < y0 - 1 || py > y1 + 1) continue;
+		          if (Math.abs(py - lastY) < minSep) continue;
+		          ctx.beginPath();
+		          ctx.moveTo(x0, py);
+		          ctx.lineTo(x1, py);
+		          ctx.stroke();
+		          ctx.fillText(fmtAxis(v), x0 - 6, py);
+		          lastY = py;
+		        }
+		        ctx.textAlign = 'left';
+		        ctx.textBaseline = 'alphabetic';
+		      } else {
+		        ctx.fillStyle = '#6b7280';
+		        ctx.textAlign = 'right';
+		        ctx.textBaseline = 'top';
+		        ctx.fillText(fmtAxis(ymax), x0 - 6, y0);
+		        ctx.textBaseline = 'bottom';
+		        ctx.fillText(fmtAxis(ymin), x0 - 6, y1);
+		        ctx.textAlign = 'left';
+		        ctx.textBaseline = 'alphabetic';
+		      }
 
 	      ctx.strokeStyle = (opts && opts.color) ? opts.color : '#2563eb';
 	      ctx.lineWidth = 2;
@@ -715,10 +760,10 @@ static std::string DashboardHtml() {
       }
       ctx.stroke();
 
-	      const last = ys[n-1];
-	      ctx.fillStyle = '#111827';
-	      ctx.font = '12px sans-serif';
-		      ctx.fillText('最新：' + fmt(last), x0 + 8, y0 + 18);
+		      const last = ys[n-1];
+		      ctx.fillStyle = '#111827';
+		      ctx.font = '12px sans-serif';
+			      ctx.fillText('最新：' + fmtAxis(last), x0 + 8, y0 + 18);
 
 	      chartMeta[canvas.id] = {
 	        dpr,
@@ -730,10 +775,10 @@ static std::string DashboardHtml() {
 	          ysRef: ys,
 	          offset: 0,
 	          unit: (opts && opts.unit) ? opts.unit : '',
-	          fmtFn: (v) => (v === null || v === undefined) ? '-' : fmt(v),
-	        }],
-	      };
-	    }
+		          fmtFn: (v) => (v === null || v === undefined) ? '-' : fmtAxis(v),
+		        }],
+		      };
+		    }
 
 	    const MAX_POINTS = 120;
 	    const series = {
@@ -829,43 +874,70 @@ static std::string DashboardHtml() {
 	        ctx.clearRect(0,0,w,h);
 	        ctx.fillStyle = '#ffffff';
 	        ctx.fillRect(0,0,w,h);
-	        const pad = 28;
-	        const x0 = pad, y0 = pad, x1 = w - pad, y1 = h - pad;
+	        const basePad = 28;
 	        ctx.strokeStyle = '#e5e7eb';
 	        ctx.lineWidth = 1;
-	        ctx.strokeRect(x0, y0, x1-x0, y1-y0);
 	        const a = series.bwInKb, b = series.bwOutKb;
 	        const n = Math.max(a.length, b.length);
 	        if (n === 0) {
+	          const x0 = basePad, y0 = basePad;
+	          ctx.strokeRect(x0, y0, w - 2*basePad, h - 2*basePad);
 	          ctx.fillStyle = '#6b7280';
 	          ctx.font = '12px sans-serif';
 	          ctx.fillText('暂无数据', x0 + 8, y0 + 18);
 	          return;
 	        }
+	        function fmtAxis(v) {
+	          v = Number(v);
+	          if (!isFinite(v)) return '-';
+	          const a = Math.abs(v);
+	          if (a >= 1e9) return (v/1e9).toFixed(a >= 1e10 ? 0 : 1) + 'G';
+	          if (a >= 1e6) return (v/1e6).toFixed(a >= 1e7 ? 0 : 1) + 'M';
+	          if (a >= 1e3) return (v/1e3).toFixed(a >= 1e4 ? 0 : 1) + 'k';
+	          if (a >= 100) return String(Math.round(v));
+	          if (a >= 10) return (Math.round(v * 10) / 10).toFixed(1);
+	          if (a >= 1) return (Math.round(v * 100) / 100).toFixed(2);
+	          return (Math.round(v * 1000) / 1000).toFixed(3);
+	        }
+
 	        let ymin = 0, ymax = 0;
 	        const bwMax = Math.max(arrMax(a), arrMax(b));
 	        const bwAx = updateAxis('c_bw', bwMax, 100);
 	        ymin = 0;
 	        ymax = bwAx.max;
+	        // dynamic left padding for large tick labels
+	        ctx.font = '11px sans-serif';
+	        let maxW = 0;
+	        for (let v = 0; v <= ymax + 1e-9; v += bwAx.step) maxW = Math.max(maxW, ctx.measureText(fmtAxis(v)).width);
+	        const leftPad = Math.max(basePad, Math.ceil(maxW) + 14);
+	        const x0 = leftPad, y0 = basePad, x1 = w - basePad, y1 = h - basePad;
+	        ctx.strokeRect(x0, y0, x1-x0, y1-y0);
 	        const sx = (n <= 1) ? 1 : (x1 - x0) / (n - 1);
 	        const sy = (y1 - y0) / (ymax - ymin);
 	        const X = (i) => x0 + i * sx;
 	        const Y = (v) => y1 - (v - ymin) * sy;
 	        ctx.fillStyle = '#6b7280';
 	        ctx.font = '11px sans-serif';
-	        const fmt = (v) => (Math.abs(v) >= 100 ? String(Math.round(v)) : (Math.round(v*100)/100).toFixed(2));
 	        // fixed ticks (adaptive step, stable)
 	        ctx.strokeStyle = '#eef2f7';
 	        ctx.lineWidth = 1;
+	        ctx.textAlign = 'right';
+	        ctx.textBaseline = 'middle';
+	        let lastY = -1e18;
+	        const minSep = 14 * dpr;
 	        for (let v = 0; v <= ymax + 1e-9; v += bwAx.step) {
 	          const py = Y(v);
+	          if (Math.abs(py - lastY) < minSep) continue;
 	          ctx.beginPath();
 	          ctx.moveTo(x0, py);
 	          ctx.lineTo(x1, py);
 	          ctx.stroke();
 	          ctx.fillStyle = '#6b7280';
-	          ctx.fillText(fmt(v), 6, py + 4);
+	          ctx.fillText(fmtAxis(v), x0 - 6, py);
+	          lastY = py;
 	        }
+	        ctx.textAlign = 'left';
+	        ctx.textBaseline = 'alphabetic';
 	        function strokeLine(arr, color) {
 	          ctx.strokeStyle = color;
 	          ctx.lineWidth = 2;
@@ -884,18 +956,18 @@ static std::string DashboardHtml() {
 	        ctx.font = '12px sans-serif';
 	        const lastIn = a.length ? a[a.length-1] : 0;
 	        const lastOut = b.length ? b[b.length-1] : 0;
-	        ctx.fillText('最新：入 ' + fmt(lastIn) + ' KB/s，出 ' + fmt(lastOut) + ' KB/s', x0 + 8, y0 + 18);
+	        ctx.fillText('最新：入 ' + fmtAxis(lastIn) + ' KB/s，出 ' + fmtAxis(lastOut) + ' KB/s', x0 + 8, y0 + 18);
 
-	        chartMeta[c.id] = {
-	          dpr,
-	          n,
-	          plot: {x0,y0,x1,y1},
-	          tsRef: series.tsMs,
-	          series: [
-	            {name:'入', ysRef:a, offset: Math.max(0, n - a.length), unit:'KB/s', fmtFn: (v) => (v === null || v === undefined) ? '-' : fmt(v)},
-	            {name:'出', ysRef:b, offset: Math.max(0, n - b.length), unit:'KB/s', fmtFn: (v) => (v === null || v === undefined) ? '-' : fmt(v)},
-	          ],
-	        };
+	          chartMeta[c.id] = {
+	            dpr,
+	            n,
+	            plot: {x0,y0,x1,y1},
+	            tsRef: series.tsMs,
+	            series: [
+	              {name:'入', ysRef:a, offset: Math.max(0, n - a.length), unit:'KB/s', fmtFn: (v) => (v === null || v === undefined) ? '-' : fmtAxis(v)},
+	              {name:'出', ysRef:b, offset: Math.max(0, n - b.length), unit:'KB/s', fmtFn: (v) => (v === null || v === undefined) ? '-' : fmtAxis(v)},
+	            ],
+	          };
 	      })();
 	      drawSeries(qs('c_rss'), series.rssMb, {name:'RSS', unit:'MB', color:'#f97316', fixedMin:0, fixedMax:rssAx.max, tickStep:rssAx.step, tsMs:series.tsMs});
 	      // percentages: keep 0-100 fixed
@@ -1375,26 +1447,38 @@ static std::string HistoryUiHtml() {
       return {w, h, dpr};
     }
 
-	    function drawSeries(canvas, xs, ys, opts) {
-	      const ctx = canvas.getContext('2d');
-	      const {w, h, dpr} = fitCanvas(canvas);
-      ctx.clearRect(0,0,w,h);
-      ctx.fillStyle = '#ffffff';
-      ctx.fillRect(0,0,w,h);
-      const pad = 28;
-      const x0 = pad, y0 = pad, x1 = w - pad, y1 = h - pad;
+		    function drawSeries(canvas, xs, ys, opts) {
+		      const ctx = canvas.getContext('2d');
+		      const {w, h, dpr} = fitCanvas(canvas);
+	      ctx.clearRect(0,0,w,h);
+	      ctx.fillStyle = '#ffffff';
+	      ctx.fillRect(0,0,w,h);
+	      const basePad = 28;
 
-      // Frame
-      ctx.strokeStyle = '#e5e7eb';
-      ctx.lineWidth = 1;
-      ctx.strokeRect(x0, y0, x1-x0, y1-y0);
+	      // Frame + empty
+	      if (!xs.length || !ys.length) {
+	        const x0 = basePad, y0 = basePad, x1 = w - basePad, y1 = h - basePad;
+	        ctx.strokeStyle = '#e5e7eb';
+	        ctx.lineWidth = 1;
+	        ctx.strokeRect(x0, y0, x1-x0, y1-y0);
+	        ctx.fillStyle = '#6b7280';
+	        ctx.font = '12px sans-serif';
+	        ctx.fillText('暂无数据', x0 + 8, y0 + 18);
+	        return;
+	      }
 
-      if (!xs.length || !ys.length) {
-        ctx.fillStyle = '#6b7280';
-        ctx.font = '12px sans-serif';
-        ctx.fillText('暂无数据', x0 + 8, y0 + 18);
-        return;
-      }
+	      function fmtAxis(v) {
+	        v = Number(v);
+	        if (!isFinite(v)) return '-';
+	        const a = Math.abs(v);
+	        if (a >= 1e9) return (v/1e9).toFixed(a >= 1e10 ? 0 : 1) + 'G';
+	        if (a >= 1e6) return (v/1e6).toFixed(a >= 1e7 ? 0 : 1) + 'M';
+	        if (a >= 1e3) return (v/1e3).toFixed(a >= 1e4 ? 0 : 1) + 'k';
+	        if (a >= 100) return String(Math.round(v));
+	        if (a >= 10) return (Math.round(v * 10) / 10).toFixed(1);
+	        if (a >= 1) return (Math.round(v * 100) / 100).toFixed(2);
+	        return (Math.round(v * 1000) / 1000).toFixed(3);
+	      }
 
 	      let ymin = ys[0], ymax = ys[0];
 	      for (const v of ys) { if (v < ymin) ymin = v; if (v > ymax) ymax = v; }
@@ -1409,33 +1493,65 @@ static std::string HistoryUiHtml() {
 	      }
 	      if (ymax - ymin < 1e-9) { ymax = ymin + 1; }
 
-      const xMin = xs[0], xMax = xs[xs.length - 1];
-      const sx = (xMax === xMin) ? 1 : (x1 - x0) / (xMax - xMin);
-      const sy = (y1 - y0) / (ymax - ymin);
-      const X = (t) => x0 + (t - xMin) * sx;
-      const Y = (v) => y1 - (v - ymin) * sy;
-
-	      // Fixed ticks (GCP-like)
-	      ctx.fillStyle = '#6b7280';
-	      ctx.font = '11px sans-serif';
-	      const fmt = (v) => (Math.abs(v) >= 100 ? String(Math.round(v)) : (Math.round(v*100)/100).toFixed(2));
 	      const tickStep = (opts && typeof opts.tickStep === 'number' && opts.tickStep > 0) ? opts.tickStep : null;
+	      const ticks = [];
+	      if (tickStep) {
+	        const start = Math.ceil(ymin / tickStep) * tickStep;
+	        for (let v = start; v <= ymax + 1e-9; v += tickStep) ticks.push(v);
+	      } else {
+	        ticks.push(ymin);
+	        if (ymax !== ymin) ticks.push(ymax);
+	      }
+
+	      ctx.font = '11px sans-serif';
+	      let maxW = 0;
+	      for (const v of ticks) maxW = Math.max(maxW, ctx.measureText(fmtAxis(v)).width);
+	      const leftPad = Math.max(basePad, Math.ceil(maxW) + 14);
+
+	      const x0 = leftPad, y0 = basePad, x1 = w - basePad, y1 = h - basePad;
+
+	      // Frame
+	      ctx.strokeStyle = '#e5e7eb';
+	      ctx.lineWidth = 1;
+	      ctx.strokeRect(x0, y0, x1-x0, y1-y0);
+
+	      const xMin = xs[0], xMax = xs[xs.length - 1];
+	      const sx = (xMax === xMin) ? 1 : (x1 - x0) / (xMax - xMin);
+	      const sy = (y1 - y0) / (ymax - ymin);
+	      const X = (t) => x0 + (t - xMin) * sx;
+	      const Y = (v) => y1 - (v - ymin) * sy;
+
+	      // Fixed ticks (GCP-like): stable + grid; avoid overlap.
 	      if (tickStep) {
 	        ctx.strokeStyle = '#eef2f7';
 	        ctx.lineWidth = 1;
-	        const start = Math.ceil(ymin / tickStep) * tickStep;
-	        for (let v = start; v <= ymax + 1e-9; v += tickStep) {
+	        ctx.fillStyle = '#6b7280';
+	        ctx.textAlign = 'right';
+	        ctx.textBaseline = 'middle';
+	        let lastY = -1e18;
+	        const minSep = 14 * dpr;
+	        for (const v of ticks) {
 	          const py = Y(v);
+	          if (py < y0 - 1 || py > y1 + 1) continue;
+	          if (Math.abs(py - lastY) < minSep) continue;
 	          ctx.beginPath();
 	          ctx.moveTo(x0, py);
 	          ctx.lineTo(x1, py);
 	          ctx.stroke();
-	          ctx.fillStyle = '#6b7280';
-	          ctx.fillText(fmt(v), 6, py + 4);
+	          ctx.fillText(fmtAxis(v), x0 - 6, py);
+	          lastY = py;
 	        }
+	        ctx.textAlign = 'left';
+	        ctx.textBaseline = 'alphabetic';
 	      } else {
-	        ctx.fillText(fmt(ymax), 6, y0 + 10);
-	        ctx.fillText(fmt(ymin), 6, y1);
+	        ctx.fillStyle = '#6b7280';
+	        ctx.textAlign = 'right';
+	        ctx.textBaseline = 'top';
+	        ctx.fillText(fmtAxis(ymax), x0 - 6, y0);
+	        ctx.textBaseline = 'bottom';
+	        ctx.fillText(fmtAxis(ymin), x0 - 6, y1);
+	        ctx.textAlign = 'left';
+	        ctx.textBaseline = 'alphabetic';
 	      }
 
       // Line
@@ -1450,11 +1566,11 @@ static std::string HistoryUiHtml() {
       }
       ctx.stroke();
 
-      // Last value
-	      const last = ys[ys.length - 1];
-	      ctx.fillStyle = '#111827';
-	      ctx.font = '12px sans-serif';
-	      ctx.fillText('last: ' + fmt(last), x0 + 8, y0 + 18);
+	      // Last value
+		      const last = ys[ys.length - 1];
+		      ctx.fillStyle = '#111827';
+		      ctx.font = '12px sans-serif';
+		      ctx.fillText('last: ' + fmtAxis(last), x0 + 8, y0 + 18);
 
 	      chartMeta[canvas.id] = {
 	        dpr,
@@ -1465,7 +1581,7 @@ static std::string HistoryUiHtml() {
 	          name: (opts && opts.name) ? opts.name : '值',
 	          ysRef: ys,
 	          unit: (opts && opts.unit) ? opts.unit : '',
-	          fmtFn: (v) => (v === null || v === undefined) ? '-' : fmt(v),
+	          fmtFn: (v) => (v === null || v === undefined) ? '-' : fmtAxis(v),
 	        }],
 	      };
 	    }
