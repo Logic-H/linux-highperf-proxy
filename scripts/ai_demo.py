@@ -174,7 +174,7 @@ def main():
     def worker_one(req_id: int):
         model = random.choice(models)
         url = f"http://127.0.0.1:{args.proxy_port}/infer?work_ms={args.work_ms}"
-        headers = {"X-Model": model, "Content-Type": "application/json"}
+        headers = {"X-Model": model, "X-Request-Id": str(req_id), "Content-Type": "application/json"}
         body = (b"{" + b"\"x\":" + (b"1" * 2000) + b"}")  # small payload; work_ms dominates
         t0 = time.time()
         j = http_json(url, method="POST", body=body, headers=headers, timeout=10.0)
