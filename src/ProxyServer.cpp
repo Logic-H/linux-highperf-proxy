@@ -751,18 +751,76 @@ static std::string DashboardHtml() {
     };
 	    let last = { tsMs: 0, totalReq: null, bytesIn: null, bytesOut: null, cpuTimeSec: null };
 	    let tickBusy = false;
-	    let cpuRange = { max: 800, step: 100 };
+	    let cpuCores = 1;
+	    const axisState = {};
 
 	    function push(arr, v) {
 	      arr.push(v);
 	      while (arr.length > MAX_POINTS) arr.shift();
 	    }
 
+	    function arrMax(arr) {
+	      if (!arr || !arr.length) return 0;
+	      let m = arr[0];
+	      for (const v of arr) if (v > m) m = v;
+	      return m;
+	    }
+
+	    function niceStep(rawStep) {
+	      rawStep = Number(rawStep);
+	      if (!isFinite(rawStep) || rawStep <= 0) return 1;
+	      const exp = Math.floor(Math.log10(rawStep));
+	      const base = Math.pow(10, exp);
+	      const f = rawStep / base;
+	      let nf = 1;
+	      if (f <= 1) nf = 1;
+	      else if (f <= 2) nf = 2;
+	      else if (f <= 5) nf = 5;
+	      else nf = 10;
+	      return nf * base;
+	    }
+
+	    function niceAxis(maxVal, minMax, ticks) {
+	      const tickCount = (typeof ticks === 'number' && ticks >= 3) ? ticks : 6;
+	      const minV = (typeof minMax === 'number' && isFinite(minMax)) ? minMax : 1;
+	      let mv = Number(maxVal);
+	      if (!isFinite(mv) || mv < 0) mv = 0;
+	      mv = Math.max(minV, mv);
+	      const step = niceStep(mv / (tickCount - 1));
+	      const niceMax = step * Math.ceil(mv / step);
+	      return {max: niceMax, step};
+	    }
+
+	    // GCP-like adaptive axis: expand quickly, shrink slowly (hysteresis) to avoid jitter.
+	    function updateAxis(id, observedMax, minMax) {
+	      const now = Date.now();
+	      const st = axisState[id] || {max: Math.max(1, minMax || 1), step: 1, lastChangeMs: 0};
+	      const target = niceAxis((Number(observedMax) || 0) * 1.15, minMax, 6);
+	      if (st.step <= 0) st.step = target.step;
+
+	      const expand = target.max > st.max * 1.05;
+	      const shrink = target.max < st.max * 0.45 && (now - st.lastChangeMs) > 15000;
+	      if (expand || shrink) {
+	        st.max = target.max;
+	        st.step = target.step;
+	        st.lastChangeMs = now;
+	      }
+	      axisState[id] = st;
+	      return st;
+	    }
+
 	    function renderCharts() {
-	      drawSeries(qs('c_qps'), series.qps, {name:'QPS', color:'#2563eb', fixedMin:0, fixedMax:20000, tickStep:2000, tsMs:series.tsMs});
-	      drawSeries(qs('c_conns'), series.conns, {name:'活跃连接', color:'#16a34a', fixedMin:0, fixedMax:10000, tickStep:1000, tsMs:series.tsMs});
-	      drawSeries(qs('c_p99'), series.p99, {name:'P99', unit:'ms', color:'#9333ea', fixedMin:0, fixedMax:1000, tickStep:100, tsMs:series.tsMs});
-	      drawSeries(qs('c_cpu'), series.cpu, {name:'CPU', unit:'%', color:'#0f766e', fixedMin:0, fixedMax:cpuRange.max, tickStep:cpuRange.step, tsMs:series.tsMs});
+	      const qpsAx = updateAxis('c_qps', arrMax(series.qps), 50);
+	      const connsAx = updateAxis('c_conns', arrMax(series.conns), 50);
+	      const p99Ax = updateAxis('c_p99', arrMax(series.p99), 10);
+	      const cpuAx = updateAxis('c_cpu', arrMax(series.cpu), 10);
+	      const rssAx = updateAxis('c_rss', arrMax(series.rssMb), 64);
+	      const queueAx = updateAxis('c_queue', arrMax(series.queueMax), 10);
+
+	      drawSeries(qs('c_qps'), series.qps, {name:'QPS', color:'#2563eb', fixedMin:0, fixedMax:qpsAx.max, tickStep:qpsAx.step, tsMs:series.tsMs});
+	      drawSeries(qs('c_conns'), series.conns, {name:'活跃连接', color:'#16a34a', fixedMin:0, fixedMax:connsAx.max, tickStep:connsAx.step, tsMs:series.tsMs});
+	      drawSeries(qs('c_p99'), series.p99, {name:'P99', unit:'ms', color:'#9333ea', fixedMin:0, fixedMax:p99Ax.max, tickStep:p99Ax.step, tsMs:series.tsMs});
+	      drawSeries(qs('c_cpu'), series.cpu, {name:'CPU', unit:'%', color:'#0f766e', fixedMin:0, fixedMax:cpuAx.max, tickStep:cpuAx.step, tsMs:series.tsMs});
 	      // bandwidth: overlay in/out
 	      (function drawBw(){
 	        const c = qs('c_bw');
@@ -784,11 +842,11 @@ static std::string DashboardHtml() {
 	          ctx.fillText('暂无数据', x0 + 8, y0 + 18);
 	          return;
 	        }
-	        const vals = a.concat(b);
 	        let ymin = 0, ymax = 0;
-	        // fixed bandwidth axis (KB/s)
+	        const bwMax = Math.max(arrMax(a), arrMax(b));
+	        const bwAx = updateAxis('c_bw', bwMax, 100);
 	        ymin = 0;
-	        ymax = 200000;
+	        ymax = bwAx.max;
 	        const sx = (n <= 1) ? 1 : (x1 - x0) / (n - 1);
 	        const sy = (y1 - y0) / (ymax - ymin);
 	        const X = (i) => x0 + i * sx;
@@ -796,10 +854,10 @@ static std::string DashboardHtml() {
 	        ctx.fillStyle = '#6b7280';
 	        ctx.font = '11px sans-serif';
 	        const fmt = (v) => (Math.abs(v) >= 100 ? String(Math.round(v)) : (Math.round(v*100)/100).toFixed(2));
-	        // fixed ticks every 20000 KB/s
+	        // fixed ticks (adaptive step, stable)
 	        ctx.strokeStyle = '#eef2f7';
 	        ctx.lineWidth = 1;
-	        for (let v = 0; v <= ymax + 1e-9; v += 20000) {
+	        for (let v = 0; v <= ymax + 1e-9; v += bwAx.step) {
 	          const py = Y(v);
 	          ctx.beginPath();
 	          ctx.moveTo(x0, py);
@@ -839,10 +897,11 @@ static std::string DashboardHtml() {
 	          ],
 	        };
 	      })();
-	      drawSeries(qs('c_rss'), series.rssMb, {name:'RSS', unit:'MB', color:'#f97316', fixedMin:0, fixedMax:4096, tickStep:256, tsMs:series.tsMs});
+	      drawSeries(qs('c_rss'), series.rssMb, {name:'RSS', unit:'MB', color:'#f97316', fixedMin:0, fixedMax:rssAx.max, tickStep:rssAx.step, tsMs:series.tsMs});
+	      // percentages: keep 0-100 fixed
 	      drawSeries(qs('c_gpu'), series.gpuMaxPct, {name:'GPU(最大)', unit:'%', color:'#06b6d4', fixedMin:0, fixedMax:100, tickStep:10, tsMs:series.tsMs});
 	      drawSeries(qs('c_vram'), series.vramMaxPct, {name:'显存(最大)', unit:'%', color:'#0ea5e9', fixedMin:0, fixedMax:100, tickStep:10, tsMs:series.tsMs});
-	      drawSeries(qs('c_queue'), series.queueMax, {name:'队列(最大)', color:'#a855f7', fixedMin:0, fixedMax:1000, tickStep:100, tsMs:series.tsMs});
+	      drawSeries(qs('c_queue'), series.queueMax, {name:'队列(最大)', color:'#a855f7', fixedMin:0, fixedMax:queueAx.max, tickStep:queueAx.step, tsMs:series.tsMs});
 	    }
 
     function renderBackends(backends) {
@@ -958,17 +1017,9 @@ static std::string DashboardHtml() {
 	          document.getElementById("proc").textContent = "-";
 	        }
 	
-	        // CPU range: keep fixed "single-core percent" axis based on detected CPU cores.
+	        // CPU cores info (used by tooltips / potential axis cap).
 	        if (j.process && typeof j.process.cpu_cores === 'number' && isFinite(j.process.cpu_cores)) {
-	          const cores = Math.max(1, Math.floor(j.process.cpu_cores));
-	          const maxPct = cores * 100;
-	          if (!cpuRange || cpuRange.max !== maxPct) {
-	            let step = 100;
-	            if (maxPct > 800) step = 200;
-	            if (maxPct > 3200) step = 500;
-	            if (maxPct > 6400) step = 1000;
-	            cpuRange = { max: maxPct, step };
-	          }
+	          cpuCores = Math.max(1, Math.floor(j.process.cpu_cores));
 	        }
 
 	        // Push chart points only when dt is sane, otherwise rates can spike massively.
@@ -1451,29 +1502,59 @@ static std::string HistoryUiHtml() {
 	        const j = await fetchHistory(seconds);
 	        const pts = getPoints(j);
 	        qs('meta').textContent = 'points: ' + pts.length;
-	        // CPU range (single-core percent): fixed axis based on reported core count.
-	        let cpuMax = 800;
-	        let cpuStep = 100;
-	        if (j && typeof j.cpu_cores === 'number' && isFinite(j.cpu_cores)) {
-	          const cores = Math.max(1, Math.floor(j.cpu_cores));
-	          cpuMax = cores * 100;
-	          cpuStep = 100;
-	          if (cpuMax > 800) cpuStep = 200;
-	          if (cpuMax > 3200) cpuStep = 500;
-	          if (cpuMax > 6400) cpuStep = 1000;
-	        }
-	        const qps = extract(pts, 'qps');
-	        const conns = extract(pts, 'active_connections');
-	        const p99 = extract(pts, 'p99_ms');
-	        const berr = extract(pts, 'backend_error_rate_interval');
-	        const cpu = extract(pts, 'cpu_pct_single_core');
-	        const rss = extract(pts, 'rss_bytes', 1/1024/1024);
-	        drawSeries(qs('c_qps'), qps.xs, qps.ys, {name:'QPS', color:'#2563eb', fixedMin:0, fixedMax:20000, tickStep:2000});
-	        drawSeries(qs('c_conns'), conns.xs, conns.ys, {name:'活跃连接', color:'#16a34a', fixedMin:0, fixedMax:10000, tickStep:1000});
-	        drawSeries(qs('c_p99'), p99.xs, p99.ys, {name:'P99', unit:'ms', color:'#9333ea', fixedMin:0, fixedMax:1000, tickStep:100});
-	        drawSeries(qs('c_berr'), berr.xs, berr.ys, {name:'后端错误率', color:'#dc2626', fixedMin:0, fixedMax:1, tickStep:0.1});
-	        drawSeries(qs('c_cpu'), cpu.xs, cpu.ys, {name:'CPU', unit:'%', color:'#0f766e', fixedMin:0, fixedMax:cpuMax, tickStep:cpuStep});
-	        drawSeries(qs('c_rss'), rss.xs, rss.ys, {name:'RSS', unit:'MB', color:'#f59e0b', fixedMin:0, fixedMax:4096, tickStep:256});
+		        function arrMax(arr) {
+		          if (!arr || !arr.length) return 0;
+		          let m = arr[0];
+		          for (const v of arr) if (v > m) m = v;
+		          return m;
+		        }
+		        function niceStep(rawStep) {
+		          rawStep = Number(rawStep);
+		          if (!isFinite(rawStep) || rawStep <= 0) return 1;
+		          const exp = Math.floor(Math.log10(rawStep));
+		          const base = Math.pow(10, exp);
+		          const f = rawStep / base;
+		          let nf = 1;
+		          if (f <= 1) nf = 1;
+		          else if (f <= 2) nf = 2;
+		          else if (f <= 5) nf = 5;
+		          else nf = 10;
+		          return nf * base;
+		        }
+		        function niceAxis(maxVal, minMax, ticks) {
+		          const tickCount = (typeof ticks === 'number' && ticks >= 3) ? ticks : 6;
+		          const minV = (typeof minMax === 'number' && isFinite(minMax)) ? minMax : 1;
+		          let mv = Number(maxVal);
+		          if (!isFinite(mv) || mv < 0) mv = 0;
+		          mv = Math.max(minV, mv);
+		          const step = niceStep(mv / (tickCount - 1));
+		          const niceMax = step * Math.ceil(mv / step);
+		          return {max: niceMax, step};
+		        }
+
+		        const qps = extract(pts, 'qps');
+		        const conns = extract(pts, 'active_connections');
+		        const p99 = extract(pts, 'p99_ms');
+		        const berr = extract(pts, 'backend_error_rate_interval');
+		        const cpu = extract(pts, 'cpu_pct_single_core');
+		        const rss = extract(pts, 'rss_bytes', 1/1024/1024);
+
+		        const qpsAx = niceAxis(arrMax(qps.ys) * 1.15, 50, 6);
+		        const connsAx = niceAxis(arrMax(conns.ys) * 1.15, 50, 6);
+		        const p99Ax = niceAxis(arrMax(p99.ys) * 1.15, 10, 6);
+		        const rssAx = niceAxis(arrMax(rss.ys) * 1.15, 64, 6);
+		        const cpuCores = (j && typeof j.cpu_cores === 'number' && isFinite(j.cpu_cores)) ? Math.max(1, Math.floor(j.cpu_cores)) : 1;
+		        const cpuCap = cpuCores * 100;
+		        const cpuObs = Math.min(arrMax(cpu.ys), cpuCap);
+		        const cpuAx = niceAxis(cpuObs * 1.15, 10, 6);
+
+		        drawSeries(qs('c_qps'), qps.xs, qps.ys, {name:'QPS', color:'#2563eb', fixedMin:0, fixedMax:qpsAx.max, tickStep:qpsAx.step});
+		        drawSeries(qs('c_conns'), conns.xs, conns.ys, {name:'活跃连接', color:'#16a34a', fixedMin:0, fixedMax:connsAx.max, tickStep:connsAx.step});
+		        drawSeries(qs('c_p99'), p99.xs, p99.ys, {name:'P99', unit:'ms', color:'#9333ea', fixedMin:0, fixedMax:p99Ax.max, tickStep:p99Ax.step});
+		        // error rate stays 0..1 for readability
+		        drawSeries(qs('c_berr'), berr.xs, berr.ys, {name:'后端错误率', color:'#dc2626', fixedMin:0, fixedMax:1, tickStep:0.1});
+		        drawSeries(qs('c_cpu'), cpu.xs, cpu.ys, {name:'CPU', unit:'%', color:'#0f766e', fixedMin:0, fixedMax:cpuAx.max, tickStep:cpuAx.step});
+		        drawSeries(qs('c_rss'), rss.xs, rss.ys, {name:'RSS', unit:'MB', color:'#f59e0b', fixedMin:0, fixedMax:rssAx.max, tickStep:rssAx.step});
 	      } catch (e) {
 	        setErr(e);
 	      }
