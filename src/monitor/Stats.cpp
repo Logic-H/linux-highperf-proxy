@@ -1,4 +1,5 @@
 #include "proxy/monitor/Stats.h"
+#include "proxy/common/Config.h"
 #include "proxy/common/MemoryPool.h"
 #include <sstream>
 #include <iomanip>
@@ -192,6 +193,18 @@ std::string Stats::ToJson() {
     ss << "  \"bytes_out\": " << bytesOut_.load() << ",\n";
     ss << "  \"udp_rx_drops\": " << udpRxDrops_.load() << ",\n";
     ss << "  \"ddos_drops\": " << ddosDrops_.load() << ",\n";
+
+    // I/O model info (configured vs runtime selection).
+    std::string configuredIoModel = proxy::common::Config::Instance().GetString("global", "io_model", "epoll");
+    std::string runtimeIoModel = "epoll";
+    if (::getenv("PROXY_USE_URING")) runtimeIoModel = "uring";
+    else if (::getenv("PROXY_USE_SELECT")) runtimeIoModel = "select";
+    else if (::getenv("PROXY_USE_POLL")) runtimeIoModel = "poll";
+    ss << "  \"io\": {\n";
+    ss << "    \"configured_model\": \"" << configuredIoModel << "\",\n";
+    ss << "    \"runtime_model\": \"" << runtimeIoModel << "\",\n";
+    ss << "    \"supported_models\": [\"select\", \"poll\", \"epoll\", \"uring\"]\n";
+    ss << "  },\n";
     
     double qps = (uptime > 0) ? (double)totalRequests_.load() / uptime : 0.0;
     ss << "  \"avg_qps\": " << std::fixed << std::setprecision(2) << qps << ",\n";

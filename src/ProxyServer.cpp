@@ -397,10 +397,12 @@ static std::string DashboardHtml() {
 <body>
   <h2>Proxy Dashboard <span class="badge">realtime</span></h2>
   <div class="muted">Polling <code>/stats</code> every 1s</div>
+  <div class="muted" style="margin-top:6px;">Links: <a href="/dashboard">/dashboard</a> · <a href="/config">/config</a> · <a href="/diagnostics">/diagnostics</a> · <a href="/history_ui">/history_ui</a> · <a href="/stats" target="_blank">/stats</a></div>
   <div class="row" style="margin-top:12px;">
     <div class="card"><div class="k">Active Connections</div><div class="v" id="active">-</div></div>
     <div class="card"><div class="k">Total Requests</div><div class="v" id="total">-</div></div>
     <div class="card"><div class="k">Avg QPS</div><div class="v" id="qps">-</div></div>
+    <div class="card"><div class="k">I/O Model (runtime/config)</div><div class="v" id="io">-</div></div>
     <div class="card"><div class="k">Backend Error Rate</div><div class="v" id="berr">-</div></div>
     <div class="card"><div class="k">P50/P90/P99 (ms)</div><div class="v" id="lat">-</div></div>
     <div class="card"><div class="k">Bytes In/Out</div><div class="v" id="bio">-</div></div>
@@ -430,6 +432,11 @@ static std::string DashboardHtml() {
         document.getElementById("active").textContent = fmtNum(j.active_connections);
         document.getElementById("total").textContent = fmtNum(j.total_requests);
         document.getElementById("qps").textContent = fmtNum(j.avg_qps, 2);
+        if (j.io) {
+          document.getElementById("io").textContent = String(j.io.runtime_model || "-") + " / " + String(j.io.configured_model || "-");
+        } else {
+          document.getElementById("io").textContent = "-";
+        }
         document.getElementById("berr").textContent = fmtNum(j.backend_error_rate, 6);
         if (j.latency_ms) {
           document.getElementById("lat").textContent =
@@ -477,6 +484,7 @@ static std::string ConfigHtml() {
 <body>
   <h2>Proxy Config</h2>
   <div class="muted">Edits update in-memory config and can optionally persist to the loaded config file. Most settings require restart to take effect.</div>
+  <div class="muted" style="margin-top:6px;">Links: <a href="/dashboard">/dashboard</a> · <a href="/config">/config</a> · <a href="/diagnostics">/diagnostics</a> · <a href="/history_ui">/history_ui</a></div>
 
   <div class="row" style="margin-top:12px;">
     <div class="card">
@@ -556,6 +564,198 @@ static std::string ConfigHtml() {
 </html>)CFG";
 }
 
+static std::string HistoryUiHtml() {
+    return R"HIS(<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>History</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif; margin: 16px; color:#111; }
+    .row { display:flex; gap:12px; flex-wrap:wrap; align-items:center; }
+    .card { border:1px solid #e5e7eb; border-radius:10px; padding:12px; background:#fff; }
+    button, input, select { font-size:14px; padding:8px; }
+    canvas { width:100%; height:220px; border:1px solid #e5e7eb; border-radius:10px; background:#fff; }
+    .muted { color:#6b7280; font-size:12px; }
+    .grid { display:grid; grid-template-columns: 1fr; gap:12px; }
+    @media (min-width: 900px) { .grid { grid-template-columns: 1fr 1fr; } }
+    .err { color:#b91c1c; }
+    a { color:#2563eb; text-decoration:none; }
+    a:hover { text-decoration:underline; }
+  </style>
+</head>
+<body>
+  <h2>History <span class="muted">(requires [history].enable=1)</span></h2>
+  <div class="muted">Charts are rendered from <code>/history</code> points (no external dependencies).</div>
+  <div class="muted" style="margin-top:6px;">Links: <a href="/dashboard">/dashboard</a> · <a href="/config">/config</a> · <a href="/diagnostics">/diagnostics</a> · <a href="/history/summary" target="_blank">/history/summary</a></div>
+
+  <div class="row" style="margin-top:12px;">
+    <div class="card">
+      <label class="muted">window</label>
+      <select id="win">
+        <option value="60">60s</option>
+        <option value="300" selected>300s</option>
+        <option value="900">900s</option>
+        <option value="3600">3600s</option>
+      </select>
+      <button onclick="reload()">Reload</button>
+      <label style="margin-left:8px;" class="muted"><input type="checkbox" id="auto" checked> auto</label>
+      <span class="muted" style="margin-left:8px;" id="meta">-</span>
+    </div>
+    <div class="card">
+      <div class="muted err" id="err"></div>
+      <div class="muted">Tip: history 数据在代理进程内存里；可用 <code>/history/summary</code> 快速看 min/max/avg。</div>
+    </div>
+  </div>
+
+  <div class="grid" style="margin-top:12px;">
+    <div class="card"><div class="muted">QPS</div><canvas id="c_qps"></canvas></div>
+    <div class="card"><div class="muted">Active Connections</div><canvas id="c_conns"></canvas></div>
+    <div class="card"><div class="muted">P99 Latency (ms)</div><canvas id="c_p99"></canvas></div>
+    <div class="card"><div class="muted">Backend Error Rate (interval)</div><canvas id="c_berr"></canvas></div>
+    <div class="card"><div class="muted">CPU % (single core, interval)</div><canvas id="c_cpu"></canvas></div>
+    <div class="card"><div class="muted">RSS (MB)</div><canvas id="c_rss"></canvas></div>
+  </div>
+
+  <script>
+    function setErr(e){ document.getElementById('err').textContent = String(e || ''); }
+    function clearErr(){ setErr(''); }
+    function qs(id){ return document.getElementById(id); }
+
+    function fitCanvas(c) {
+      const dpr = window.devicePixelRatio || 1;
+      const rect = c.getBoundingClientRect();
+      const w = Math.max(10, Math.floor(rect.width * dpr));
+      const h = Math.max(10, Math.floor(rect.height * dpr));
+      if (c.width !== w || c.height !== h) { c.width = w; c.height = h; }
+      return {w, h, dpr};
+    }
+
+    function drawSeries(canvas, xs, ys, opts) {
+      const ctx = canvas.getContext('2d');
+      const {w, h} = fitCanvas(canvas);
+      ctx.clearRect(0,0,w,h);
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0,0,w,h);
+      const pad = 28;
+      const x0 = pad, y0 = pad, x1 = w - pad, y1 = h - pad;
+
+      // Frame
+      ctx.strokeStyle = '#e5e7eb';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(x0, y0, x1-x0, y1-y0);
+
+      if (!xs.length || !ys.length) {
+        ctx.fillStyle = '#6b7280';
+        ctx.font = '12px sans-serif';
+        ctx.fillText('no data', x0 + 8, y0 + 18);
+        return;
+      }
+
+      let ymin = ys[0], ymax = ys[0];
+      for (const v of ys) { if (v < ymin) ymin = v; if (v > ymax) ymax = v; }
+      if (opts && typeof opts.min === 'number') ymin = Math.min(ymin, opts.min);
+      if (opts && typeof opts.max === 'number') ymax = Math.max(ymax, opts.max);
+      if (ymax - ymin < 1e-9) { ymax = ymin + 1; }
+
+      const xMin = xs[0], xMax = xs[xs.length - 1];
+      const sx = (xMax === xMin) ? 1 : (x1 - x0) / (xMax - xMin);
+      const sy = (y1 - y0) / (ymax - ymin);
+      const X = (t) => x0 + (t - xMin) * sx;
+      const Y = (v) => y1 - (v - ymin) * sy;
+
+      // Y labels
+      ctx.fillStyle = '#6b7280';
+      ctx.font = '11px sans-serif';
+      const fmt = (v) => (Math.abs(v) >= 100 ? String(Math.round(v)) : (Math.round(v*100)/100).toFixed(2));
+      ctx.fillText(fmt(ymax), 6, y0 + 10);
+      ctx.fillText(fmt(ymin), 6, y1);
+
+      // Line
+      ctx.strokeStyle = (opts && opts.color) ? opts.color : '#2563eb';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      for (let i = 0; i < xs.length; i++) {
+        const px = X(xs[i]);
+        const py = Y(ys[i]);
+        if (i === 0) ctx.moveTo(px, py);
+        else ctx.lineTo(px, py);
+      }
+      ctx.stroke();
+
+      // Last value
+      const last = ys[ys.length - 1];
+      ctx.fillStyle = '#111827';
+      ctx.font = '12px sans-serif';
+      ctx.fillText('last: ' + fmt(last), x0 + 8, y0 + 18);
+    }
+
+    async function fetchHistory(seconds) {
+      const r = await fetch('/history?seconds=' + encodeURIComponent(seconds), {cache:'no-store'});
+      if (!r.ok) throw new Error('GET /history: ' + r.status);
+      return await r.json();
+    }
+
+    function getPoints(j) {
+      if (!j) return [];
+      if (j.points && Array.isArray(j.points)) return j.points;
+      return [];
+    }
+
+    function extract(points, key, scale) {
+      const xs = [];
+      const ys = [];
+      for (const p of points) {
+        if (!p || typeof p.ts_ms !== 'number') continue;
+        const v = p[key];
+        if (typeof v !== 'number') continue;
+        xs.push(p.ts_ms);
+        ys.push(scale ? v * scale : v);
+      }
+      return {xs, ys};
+    }
+
+    async function reload() {
+      clearErr();
+      const seconds = Number(qs('win').value || 300);
+      try {
+        const j = await fetchHistory(seconds);
+        const pts = getPoints(j);
+        qs('meta').textContent = 'points: ' + pts.length;
+        const qps = extract(pts, 'qps');
+        const conns = extract(pts, 'active_connections');
+        const p99 = extract(pts, 'p99_ms');
+        const berr = extract(pts, 'backend_error_rate_interval');
+        const cpu = extract(pts, 'cpu_pct_single_core');
+        const rss = extract(pts, 'rss_bytes', 1/1024/1024);
+        drawSeries(qs('c_qps'), qps.xs, qps.ys, {color:'#2563eb', min:0});
+        drawSeries(qs('c_conns'), conns.xs, conns.ys, {color:'#16a34a', min:0});
+        drawSeries(qs('c_p99'), p99.xs, p99.ys, {color:'#9333ea', min:0});
+        drawSeries(qs('c_berr'), berr.xs, berr.ys, {color:'#dc2626', min:0});
+        drawSeries(qs('c_cpu'), cpu.xs, cpu.ys, {color:'#0f766e', min:0});
+        drawSeries(qs('c_rss'), rss.xs, rss.ys, {color:'#f59e0b', min:0});
+      } catch (e) {
+        setErr(e);
+      }
+    }
+
+    let timer = null;
+    function setAuto(on) {
+      if (timer) { clearInterval(timer); timer = null; }
+      if (on) timer = setInterval(reload, 2000);
+    }
+
+    window.addEventListener('resize', () => reload());
+    qs('win').onchange = reload;
+    qs('auto').onchange = () => setAuto(qs('auto').checked);
+    setAuto(true);
+    reload();
+  </script>
+</body>
+</html>)HIS";
+}
+
 static std::string DiagnosticsHtml() {
     // Minimal diagnostics console: tail audit log + dump combined diagnose JSON.
     return R"DIAG(<!doctype html>
@@ -577,7 +777,7 @@ static std::string DiagnosticsHtml() {
 </head>
 <body>
   <h2>Proxy Diagnostics</h2>
-  <div class="muted">Links: <a href="/stats" target="_blank">/stats</a> · <a href="/history/summary" target="_blank">/history/summary</a> · <a href="/dashboard" target="_blank">/dashboard</a> · <a href="/config" target="_blank">/config</a></div>
+  <div class="muted">Links: <a href="/stats" target="_blank">/stats</a> · <a href="/history/summary" target="_blank">/history/summary</a> · <a href="/dashboard" target="_blank">/dashboard</a> · <a href="/config" target="_blank">/config</a> · <a href="/history_ui" target="_blank">/history_ui</a></div>
 
   <div class="row" style="margin-top:12px;">
     <div class="card" style="flex:1; min-width:320px;">
@@ -2705,6 +2905,21 @@ void ProxyServer::OnMessage(const network::TcpConnectionPtr& conn,
 
                 if (req.getMethod() == protocol::HttpRequest::kGet && req.path() == "/config") {
                     const std::string html = ConfigHtml();
+                    std::string response = "HTTP/1.1 200 OK\r\n"
+                                           "Content-Type: text/html; charset=utf-8\r\n"
+                                           "Content-Length: " +
+                                           std::to_string(html.size()) +
+                                           "\r\n"
+                                           "Connection: close\r\n"
+                                           "\r\n" +
+                                           html;
+                    conn->Send(response);
+                    conn->Shutdown();
+                    return;
+                }
+
+                if (req.getMethod() == protocol::HttpRequest::kGet && req.path() == "/history_ui") {
+                    const std::string html = HistoryUiHtml();
                     std::string response = "HTTP/1.1 200 OK\r\n"
                                            "Content-Type: text/html; charset=utf-8\r\n"
                                            "Content-Length: " +

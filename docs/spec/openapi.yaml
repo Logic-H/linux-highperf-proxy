@@ -45,6 +45,16 @@ paths:
               schema:
                 type: object
                 additionalProperties: true
+  /history_ui:
+    get:
+      summary: History charts HTML
+      responses:
+        "200":
+          description: History UI page
+          content:
+            text/html:
+              schema:
+                type: string
   /history/summary:
     get:
       summary: Query history summary

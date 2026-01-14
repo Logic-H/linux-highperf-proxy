@@ -24,6 +24,9 @@ title: 监控仪表板展示
 - `GET /history?seconds=60`
 - `GET /history/summary?seconds=300`
 
+同时提供一个轻量历史图表页：
+- `GET /history_ui`
+
 ## 3. 诊断页 `/diagnostics`
 
 - 集成：

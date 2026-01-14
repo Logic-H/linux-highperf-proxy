@@ -19,6 +19,11 @@
 - 返回：JSON
 - 用途：历史采样点查询（需要启用 `[history]`）。
 
+### `GET /history_ui`
+
+- 返回：HTML
+- 用途：历史图表页（从 `/history` 拉取 points 渲染）。
+
 ### `GET /history/summary?seconds=300`
 
 - 返回：JSON
