@@ -376,39 +376,54 @@ static std::string ToLowerAscii(std::string s) {
 }
 
 static std::string DashboardHtml() {
-    // Minimal single-file dashboard (no external deps): polls /stats and renders key metrics.
+    // Single-file dashboard (no external deps): polls /stats and renders realtime charts + JSON.
     return R"(<!doctype html>
 <html>
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Proxy Dashboard</title>
+  <title>代理监控仪表盘</title>
   <style>
     body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif; margin: 16px; color:#111; }
     .row { display:flex; flex-wrap:wrap; gap:12px; }
     .card { border:1px solid #e5e7eb; border-radius:10px; padding:12px; min-width:220px; background:#fff; }
     .k { font-size:12px; color:#6b7280; }
     .v { font-size:22px; font-weight:600; }
+    .grid { display:grid; grid-template-columns: 1fr; gap:12px; margin-top:12px; }
+    @media (min-width: 900px) { .grid { grid-template-columns: 1fr 1fr; } }
+    canvas { width:100%; height:220px; border:1px solid #e5e7eb; border-radius:10px; background:#fff; }
     pre { background:#0b1220; color:#d1e7ff; padding:12px; border-radius:10px; overflow:auto; }
     .muted { color:#6b7280; font-size:12px; }
     .badge { display:inline-block; padding:2px 8px; border-radius:999px; background:#eef2ff; color:#3730a3; font-size:12px; }
+    a { color:#2563eb; text-decoration:none; }
+    a:hover { text-decoration:underline; }
   </style>
 </head>
 <body>
-  <h2>Proxy Dashboard <span class="badge">realtime</span></h2>
-  <div class="muted">Polling <code>/stats</code> every 1s</div>
-  <div class="muted" style="margin-top:6px;">Links: <a href="/dashboard">/dashboard</a> · <a href="/config">/config</a> · <a href="/diagnostics">/diagnostics</a> · <a href="/history_ui">/history_ui</a> · <a href="/stats" target="_blank">/stats</a></div>
+  <h2>代理监控仪表盘 <span class="badge">实时</span></h2>
+  <div class="muted">每 1 秒轮询 <code>/stats</code>，在浏览器端本地维护时间序列并绘制图表（无外部依赖）。</div>
+  <div class="muted" style="margin-top:6px;">入口：<a href="/dashboard">/dashboard</a> · <a href="/history_ui">/history_ui</a> · <a href="/diagnostics">/diagnostics</a> · <a href="/config">/config</a> · <a href="/stats" target="_blank">/stats</a></div>
   <div class="row" style="margin-top:12px;">
-    <div class="card"><div class="k">Active Connections</div><div class="v" id="active">-</div></div>
-    <div class="card"><div class="k">Total Requests</div><div class="v" id="total">-</div></div>
-    <div class="card"><div class="k">Avg QPS</div><div class="v" id="qps">-</div></div>
-    <div class="card"><div class="k">I/O Model (runtime/config)</div><div class="v" id="io">-</div></div>
-    <div class="card"><div class="k">Backend Error Rate</div><div class="v" id="berr">-</div></div>
-    <div class="card"><div class="k">P50/P90/P99 (ms)</div><div class="v" id="lat">-</div></div>
-    <div class="card"><div class="k">Bytes In/Out</div><div class="v" id="bio">-</div></div>
-    <div class="card"><div class="k">Process RSS / FD</div><div class="v" id="proc">-</div></div>
+    <div class="card"><div class="k">活跃连接数</div><div class="v" id="active">-</div></div>
+    <div class="card"><div class="k">总请求数</div><div class="v" id="total">-</div></div>
+    <div class="card"><div class="k">实时 QPS（近 1s）</div><div class="v" id="qps">-</div></div>
+    <div class="card"><div class="k">I/O 模型（运行/配置）</div><div class="v" id="io">-</div></div>
+    <div class="card"><div class="k">后端错误率（累计）</div><div class="v" id="berr">-</div></div>
+    <div class="card"><div class="k">延迟 P50/P90/P99（ms）</div><div class="v" id="lat">-</div></div>
+    <div class="card"><div class="k">流量（累计）入/出</div><div class="v" id="bio">-</div></div>
+    <div class="card"><div class="k">进程 RSS / FD</div><div class="v" id="proc">-</div></div>
   </div>
-  <h3 style="margin-top:18px;">Raw JSON</h3>
+
+  <div class="grid">
+    <div class="card"><div class="muted">实时 QPS</div><canvas id="c_qps"></canvas></div>
+    <div class="card"><div class="muted">活跃连接数</div><canvas id="c_conns"></canvas></div>
+    <div class="card"><div class="muted">P99 延迟（ms）</div><canvas id="c_p99"></canvas></div>
+    <div class="card"><div class="muted">CPU 单核占用（近 1s，%）</div><canvas id="c_cpu"></canvas></div>
+    <div class="card"><div class="muted">流量（近 1s，入/出 KB）</div><canvas id="c_bw"></canvas></div>
+    <div class="card"><div class="muted">RSS（MB）</div><canvas id="c_rss"></canvas></div>
+  </div>
+
+  <h3 style="margin-top:18px;">原始 JSON</h3>
   <pre id="raw">{}</pre>
   <script>
     function fmtNum(x, d) {
@@ -425,13 +440,120 @@ static std::string DashboardHtml() {
       let i=0; while (n>=1024 && i<units.length-1) { n/=1024; i++; }
       return n.toFixed(i===0?0:2)+" "+units[i];
     }
+
+    function qs(id){ return document.getElementById(id); }
+    function fitCanvas(c) {
+      const dpr = window.devicePixelRatio || 1;
+      const rect = c.getBoundingClientRect();
+      const w = Math.max(10, Math.floor(rect.width * dpr));
+      const h = Math.max(10, Math.floor(rect.height * dpr));
+      if (c.width !== w || c.height !== h) { c.width = w; c.height = h; }
+      return {w, h, dpr};
+    }
+
+    function drawSeries(canvas, ys, opts) {
+      const ctx = canvas.getContext('2d');
+      const {w, h} = fitCanvas(canvas);
+      ctx.clearRect(0,0,w,h);
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0,0,w,h);
+      const pad = 28;
+      const x0 = pad, y0 = pad, x1 = w - pad, y1 = h - pad;
+      ctx.strokeStyle = '#e5e7eb';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(x0, y0, x1-x0, y1-y0);
+      if (!ys || ys.length === 0) {
+        ctx.fillStyle = '#6b7280';
+        ctx.font = '12px sans-serif';
+        ctx.fillText('暂无数据', x0 + 8, y0 + 18);
+        return;
+      }
+      let ymin = ys[0], ymax = ys[0];
+      for (const v of ys) { if (v < ymin) ymin = v; if (v > ymax) ymax = v; }
+      if (opts && typeof opts.min === 'number') ymin = Math.min(ymin, opts.min);
+      if (opts && typeof opts.max === 'number') ymax = Math.max(ymax, opts.max);
+      if (ymax - ymin < 1e-9) { ymax = ymin + 1; }
+      const n = ys.length;
+      const sx = (n <= 1) ? 1 : (x1 - x0) / (n - 1);
+      const sy = (y1 - y0) / (ymax - ymin);
+      const X = (i) => x0 + i * sx;
+      const Y = (v) => y1 - (v - ymin) * sy;
+
+      ctx.fillStyle = '#6b7280';
+      ctx.font = '11px sans-serif';
+      const fmt = (v) => (Math.abs(v) >= 100 ? String(Math.round(v)) : (Math.round(v*100)/100).toFixed(2));
+      ctx.fillText(fmt(ymax), 6, y0 + 10);
+      ctx.fillText(fmt(ymin), 6, y1);
+
+      ctx.strokeStyle = (opts && opts.color) ? opts.color : '#2563eb';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      for (let i = 0; i < n; i++) {
+        const px = X(i);
+        const py = Y(ys[i]);
+        if (i === 0) ctx.moveTo(px, py);
+        else ctx.lineTo(px, py);
+      }
+      ctx.stroke();
+
+      const last = ys[n-1];
+      ctx.fillStyle = '#111827';
+      ctx.font = '12px sans-serif';
+      ctx.fillText('最新：' + fmt(last), x0 + 8, y0 + 18);
+    }
+
+    const MAX_POINTS = 120;
+    const series = {
+      qps: [],
+      conns: [],
+      p99: [],
+      cpu: [],
+      bwInKb: [],
+      bwOutKb: [],
+      rssMb: [],
+    };
+    let last = { tsMs: 0, totalReq: null, bytesIn: null, bytesOut: null, cpuTimeSec: null };
+
+    function push(arr, v) {
+      arr.push(v);
+      while (arr.length > MAX_POINTS) arr.shift();
+    }
+
     async function tick() {
       try {
         const r = await fetch("/stats", { cache: "no-store" });
         const j = await r.json();
+        const nowMs = Date.now();
         document.getElementById("active").textContent = fmtNum(j.active_connections);
         document.getElementById("total").textContent = fmtNum(j.total_requests);
-        document.getElementById("qps").textContent = fmtNum(j.avg_qps, 2);
+
+        // Instant QPS from deltas.
+        let instQps = null;
+        let bwInKb = null;
+        let bwOutKb = null;
+        let cpuPct = null;
+        const dt = (last.tsMs > 0) ? Math.max(1e-3, (nowMs - last.tsMs) / 1000.0) : null;
+        if (dt && typeof j.total_requests === 'number' && typeof last.totalReq === 'number') {
+          instQps = Math.max(0, (j.total_requests - last.totalReq) / dt);
+        }
+        if (dt && typeof j.bytes_in === 'number' && typeof last.bytesIn === 'number') {
+          bwInKb = Math.max(0, (j.bytes_in - last.bytesIn) / dt / 1024.0);
+        }
+        if (dt && typeof j.bytes_out === 'number' && typeof last.bytesOut === 'number') {
+          bwOutKb = Math.max(0, (j.bytes_out - last.bytesOut) / dt / 1024.0);
+        }
+        if (dt && j.process && typeof j.process.cpu_time_sec === 'number' && typeof last.cpuTimeSec === 'number') {
+          cpuPct = Math.max(0, ((j.process.cpu_time_sec - last.cpuTimeSec) / dt) * 100.0);
+        }
+        last = {
+          tsMs: nowMs,
+          totalReq: (typeof j.total_requests === 'number') ? j.total_requests : last.totalReq,
+          bytesIn: (typeof j.bytes_in === 'number') ? j.bytes_in : last.bytesIn,
+          bytesOut: (typeof j.bytes_out === 'number') ? j.bytes_out : last.bytesOut,
+          cpuTimeSec: (j.process && typeof j.process.cpu_time_sec === 'number') ? j.process.cpu_time_sec : last.cpuTimeSec
+        };
+
+        document.getElementById("qps").textContent = (instQps === null) ? "-" : fmtNum(instQps, 2);
         if (j.io) {
           document.getElementById("io").textContent = String(j.io.runtime_model || "-") + " / " + String(j.io.configured_model || "-");
         } else {
@@ -450,13 +572,86 @@ static std::string DashboardHtml() {
         } else {
           document.getElementById("proc").textContent = "-";
         }
+
+        // Push chart points.
+        push(series.conns, (typeof j.active_connections === 'number') ? j.active_connections : 0);
+        push(series.qps, (instQps === null) ? 0 : instQps);
+        const p99 = (j.latency_ms && typeof j.latency_ms.p99_ms === 'number') ? j.latency_ms.p99_ms : 0;
+        push(series.p99, p99);
+        push(series.cpu, (cpuPct === null) ? 0 : cpuPct);
+        push(series.bwInKb, (bwInKb === null) ? 0 : bwInKb);
+        push(series.bwOutKb, (bwOutKb === null) ? 0 : bwOutKb);
+        const rssMb = (j.process && typeof j.process.rss_bytes === 'number') ? (j.process.rss_bytes / 1024.0 / 1024.0) : 0;
+        push(series.rssMb, rssMb);
+
+        drawSeries(qs('c_qps'), series.qps, {color:'#2563eb', min:0});
+        drawSeries(qs('c_conns'), series.conns, {color:'#16a34a', min:0});
+        drawSeries(qs('c_p99'), series.p99, {color:'#9333ea', min:0});
+        drawSeries(qs('c_cpu'), series.cpu, {color:'#0f766e', min:0});
+        // bandwidth: overlay in/out
+        (function drawBw(){
+          const c = qs('c_bw');
+          const ctx = c.getContext('2d');
+          const {w, h} = fitCanvas(c);
+          ctx.clearRect(0,0,w,h);
+          ctx.fillStyle = '#ffffff';
+          ctx.fillRect(0,0,w,h);
+          const pad = 28;
+          const x0 = pad, y0 = pad, x1 = w - pad, y1 = h - pad;
+          ctx.strokeStyle = '#e5e7eb';
+          ctx.lineWidth = 1;
+          ctx.strokeRect(x0, y0, x1-x0, y1-y0);
+          const a = series.bwInKb, b = series.bwOutKb;
+          const n = Math.max(a.length, b.length);
+          if (n === 0) {
+            ctx.fillStyle = '#6b7280';
+            ctx.font = '12px sans-serif';
+            ctx.fillText('暂无数据', x0 + 8, y0 + 18);
+            return;
+          }
+          const vals = a.concat(b);
+          let ymin = 0, ymax = 0;
+          for (const v of vals) { if (v > ymax) ymax = v; }
+          if (ymax - ymin < 1e-9) ymax = ymin + 1;
+          const sx = (n <= 1) ? 1 : (x1 - x0) / (n - 1);
+          const sy = (y1 - y0) / (ymax - ymin);
+          const X = (i) => x0 + i * sx;
+          const Y = (v) => y1 - (v - ymin) * sy;
+          ctx.fillStyle = '#6b7280';
+          ctx.font = '11px sans-serif';
+          const fmt = (v) => (Math.abs(v) >= 100 ? String(Math.round(v)) : (Math.round(v*100)/100).toFixed(2));
+          ctx.fillText(fmt(ymax), 6, y0 + 10);
+          ctx.fillText(fmt(ymin), 6, y1);
+          function strokeLine(arr, color) {
+            ctx.strokeStyle = color;
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            for (let i = 0; i < arr.length; i++) {
+              const px = X(i + (n - arr.length));
+              const py = Y(arr[i]);
+              if (i === 0) ctx.moveTo(px, py);
+              else ctx.lineTo(px, py);
+            }
+            ctx.stroke();
+          }
+          strokeLine(a, '#f59e0b'); // in
+          strokeLine(b, '#ef4444'); // out
+          ctx.fillStyle = '#111827';
+          ctx.font = '12px sans-serif';
+          const lastIn = a.length ? a[a.length-1] : 0;
+          const lastOut = b.length ? b[b.length-1] : 0;
+          ctx.fillText('最新：入 ' + fmt(lastIn) + ' KB/s，出 ' + fmt(lastOut) + ' KB/s', x0 + 8, y0 + 18);
+        })();
+        drawSeries(qs('c_rss'), series.rssMb, {color:'#f97316', min:0});
+
         document.getElementById("raw").textContent = JSON.stringify(j, null, 2);
       } catch (e) {
-        document.getElementById("raw").textContent = "ERROR: " + String(e);
+        document.getElementById("raw").textContent = "错误: " + String(e);
       }
     }
     tick();
     setInterval(tick, 1000);
+    window.addEventListener('resize', () => tick());
   </script>
 </body>
 </html>)";
@@ -468,7 +663,7 @@ static std::string ConfigHtml() {
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Proxy Config</title>
+  <title>代理配置管理</title>
   <style>
     body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif; margin: 16px; color:#111; }
     .row { display:flex; gap:12px; flex-wrap:wrap; }
@@ -482,30 +677,30 @@ static std::string ConfigHtml() {
   </style>
 </head>
 <body>
-  <h2>Proxy Config</h2>
-  <div class="muted">Edits update in-memory config and can optionally persist to the loaded config file. Most settings require restart to take effect.</div>
-  <div class="muted" style="margin-top:6px;">Links: <a href="/dashboard">/dashboard</a> · <a href="/config">/config</a> · <a href="/diagnostics">/diagnostics</a> · <a href="/history_ui">/history_ui</a></div>
+  <h2>代理配置管理</h2>
+  <div class="muted">此页面会更新进程内存中的配置，并可选择写回已加载的配置文件。大部分配置需要重启后生效。</div>
+  <div class="muted" style="margin-top:6px;">入口：<a href="/dashboard">/dashboard</a> · <a href="/history_ui">/history_ui</a> · <a href="/diagnostics">/diagnostics</a></div>
 
   <div class="row" style="margin-top:12px;">
     <div class="card">
       <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
-        <button onclick="loadCfg()">Reload</button>
-        <label><input type="checkbox" id="save" checked> Save to file</label>
-        <span class="muted" id="file">file: -</span>
+        <button onclick="loadCfg()">刷新</button>
+        <label><input type="checkbox" id="save" checked> 写回文件</label>
+        <span class="muted" id="file">文件：-</span>
       </div>
     </div>
     <div class="card">
-      <div class="muted">Quick edit</div>
+      <div class="muted">快速修改</div>
       <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:6px;">
         <input id="sec" placeholder="section" value="global">
         <input id="key" placeholder="key" value="log_level">
         <input id="val" placeholder="value" value="ERROR">
-        <button onclick="applyOne()">Apply</button>
+        <button onclick="applyOne()">应用</button>
       </div>
     </div>
   </div>
 
-  <h3 style="margin-top:18px;">Settings</h3>
+  <h3 style="margin-top:18px;">配置项</h3>
   <div class="card">
     <table>
       <thead><tr><th>Section</th><th>Key</th><th>Value</th><th></th></tr></thead>
@@ -513,7 +708,7 @@ static std::string ConfigHtml() {
     </table>
   </div>
 
-  <h3 style="margin-top:18px;">Raw JSON</h3>
+  <h3 style="margin-top:18px;">原始 JSON</h3>
   <pre id="raw">{}</pre>
 
   <script>
@@ -522,7 +717,7 @@ static std::string ConfigHtml() {
       const r = await fetch('/admin/config', {cache:'no-store'});
       const j = await r.json();
       document.getElementById('raw').textContent = JSON.stringify(j, null, 2);
-      document.getElementById('file').textContent = 'file: ' + (j.file || '-');
+      document.getElementById('file').textContent = '文件：' + (j.file || '-');
       const tbody = document.getElementById('rows');
       tbody.innerHTML = '';
       const s = j.settings || {};
@@ -534,7 +729,7 @@ static std::string ConfigHtml() {
           const tr = document.createElement('tr');
           tr.innerHTML = '<td>'+esc(sec)+'</td><td>'+esc(k)+'</td>'+
             '<td><input style=\"width:100%\" value=\"'+esc(v)+'\" /></td>'+
-            '<td><button>Save</button></td>';
+            '<td><button>保存</button></td>';
           tr.querySelector('button').onclick = async () => {
             const nv = tr.querySelector('input').value;
             await updateCfg(sec, k, nv);
@@ -549,7 +744,7 @@ static std::string ConfigHtml() {
       const body = { updates: [{section, key, value}], save };
       const r = await fetch('/admin/config', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
       const j = await r.json();
-      if (!j.ok) alert('update failed: '+JSON.stringify(j));
+      if (!j.ok) alert('更新失败：'+JSON.stringify(j));
     }
     async function applyOne(){
       const section = document.getElementById('sec').value;
@@ -570,7 +765,7 @@ static std::string HistoryUiHtml() {
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>History</title>
+  <title>历史监控</title>
   <style>
     body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif; margin: 16px; color:#111; }
     .row { display:flex; gap:12px; flex-wrap:wrap; align-items:center; }
@@ -586,35 +781,35 @@ static std::string HistoryUiHtml() {
   </style>
 </head>
 <body>
-  <h2>History <span class="muted">(requires [history].enable=1)</span></h2>
-  <div class="muted">Charts are rendered from <code>/history</code> points (no external dependencies).</div>
-  <div class="muted" style="margin-top:6px;">Links: <a href="/dashboard">/dashboard</a> · <a href="/config">/config</a> · <a href="/diagnostics">/diagnostics</a> · <a href="/history/summary" target="_blank">/history/summary</a></div>
+  <h2>历史监控 <span class="muted">（需开启 [history].enable=1）</span></h2>
+  <div class="muted">从 <code>/history</code> 拉取采样点并绘图（无外部依赖）。</div>
+  <div class="muted" style="margin-top:6px;">入口：<a href="/dashboard">/dashboard</a> · <a href="/diagnostics">/diagnostics</a> · <a href="/config">/config</a> · <a href="/history/summary" target="_blank">/history/summary</a></div>
 
   <div class="row" style="margin-top:12px;">
     <div class="card">
-      <label class="muted">window</label>
+      <label class="muted">窗口</label>
       <select id="win">
         <option value="60">60s</option>
         <option value="300" selected>300s</option>
         <option value="900">900s</option>
         <option value="3600">3600s</option>
       </select>
-      <button onclick="reload()">Reload</button>
-      <label style="margin-left:8px;" class="muted"><input type="checkbox" id="auto" checked> auto</label>
+      <button onclick="reload()">刷新</button>
+      <label style="margin-left:8px;" class="muted"><input type="checkbox" id="auto" checked> 自动刷新</label>
       <span class="muted" style="margin-left:8px;" id="meta">-</span>
     </div>
     <div class="card">
       <div class="muted err" id="err"></div>
-      <div class="muted">Tip: history 数据在代理进程内存里；可用 <code>/history/summary</code> 快速看 min/max/avg。</div>
+      <div class="muted">提示：history 数据在代理进程内存里；可用 <code>/history/summary</code> 快速查看 min/max/avg。</div>
     </div>
   </div>
 
   <div class="grid" style="margin-top:12px;">
     <div class="card"><div class="muted">QPS</div><canvas id="c_qps"></canvas></div>
-    <div class="card"><div class="muted">Active Connections</div><canvas id="c_conns"></canvas></div>
-    <div class="card"><div class="muted">P99 Latency (ms)</div><canvas id="c_p99"></canvas></div>
-    <div class="card"><div class="muted">Backend Error Rate (interval)</div><canvas id="c_berr"></canvas></div>
-    <div class="card"><div class="muted">CPU % (single core, interval)</div><canvas id="c_cpu"></canvas></div>
+    <div class="card"><div class="muted">活跃连接数</div><canvas id="c_conns"></canvas></div>
+    <div class="card"><div class="muted">P99 延迟（ms）</div><canvas id="c_p99"></canvas></div>
+    <div class="card"><div class="muted">后端错误率（区间）</div><canvas id="c_berr"></canvas></div>
+    <div class="card"><div class="muted">CPU 单核占用（区间，%）</div><canvas id="c_cpu"></canvas></div>
     <div class="card"><div class="muted">RSS (MB)</div><canvas id="c_rss"></canvas></div>
   </div>
 
@@ -649,7 +844,7 @@ static std::string HistoryUiHtml() {
       if (!xs.length || !ys.length) {
         ctx.fillStyle = '#6b7280';
         ctx.font = '12px sans-serif';
-        ctx.fillText('no data', x0 + 8, y0 + 18);
+        ctx.fillText('暂无数据', x0 + 8, y0 + 18);
         return;
       }
 
@@ -763,7 +958,7 @@ static std::string DiagnosticsHtml() {
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Proxy Diagnostics</title>
+  <title>故障诊断</title>
   <style>
     body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif; margin: 16px; color:#111; }
     .row { display:flex; gap:12px; flex-wrap:wrap; }
@@ -776,25 +971,25 @@ static std::string DiagnosticsHtml() {
   </style>
 </head>
 <body>
-  <h2>Proxy Diagnostics</h2>
-  <div class="muted">Links: <a href="/stats" target="_blank">/stats</a> · <a href="/history/summary" target="_blank">/history/summary</a> · <a href="/dashboard" target="_blank">/dashboard</a> · <a href="/config" target="_blank">/config</a> · <a href="/history_ui" target="_blank">/history_ui</a></div>
+  <h2>故障诊断</h2>
+  <div class="muted">入口：<a href="/dashboard" target="_blank">/dashboard</a> · <a href="/history_ui" target="_blank">/history_ui</a> · <a href="/config" target="_blank">/config</a> · <a href="/stats" target="_blank">/stats</a> · <a href="/history/summary" target="_blank">/history/summary</a></div>
 
   <div class="row" style="margin-top:12px;">
     <div class="card" style="flex:1; min-width:320px;">
       <div style="display:flex; gap:8px; align-items:center;">
-        <div style="font-weight:600;">Audit Log (tail)</div>
+        <div style="font-weight:600;">审计日志（尾部）</div>
         <div style="margin-left:auto;"></div>
-        <label class="muted">lines</label>
+        <label class="muted">行数</label>
         <input id="lines" value="200" style="width:90px;">
-        <button onclick="loadLogs()">Refresh</button>
+        <button onclick="loadLogs()">刷新</button>
       </div>
-      <pre id="log">(click Refresh)</pre>
+      <pre id="log">（点击“刷新”）</pre>
     </div>
     <div class="card" style="flex:1; min-width:320px;">
       <div style="display:flex; gap:8px; align-items:center;">
-        <div style="font-weight:600;">Diagnose JSON</div>
+        <div style="font-weight:600;">综合诊断 JSON</div>
         <div style="margin-left:auto;"></div>
-        <button onclick="loadDiag()">Refresh</button>
+        <button onclick="loadDiag()">刷新</button>
       </div>
       <pre id="diag">{}</pre>
     </div>
@@ -808,7 +1003,7 @@ static std::string DiagnosticsHtml() {
         const t = await r.text();
         document.getElementById('log').textContent = t;
       } catch (e) {
-        document.getElementById('log').textContent = 'ERROR: ' + String(e);
+        document.getElementById('log').textContent = '错误：' + String(e);
       }
     }
     async function loadDiag(){
@@ -817,7 +1012,7 @@ static std::string DiagnosticsHtml() {
         const j = await r.json();
         document.getElementById('diag').textContent = JSON.stringify(j, null, 2);
       } catch (e) {
-        document.getElementById('diag').textContent = 'ERROR: ' + String(e);
+        document.getElementById('diag').textContent = '错误：' + String(e);
       }
     }
   </script>
