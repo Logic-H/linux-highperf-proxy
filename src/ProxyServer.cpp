@@ -656,12 +656,89 @@ static std::string DashboardHtml() {
       vramMaxPct: [],
       queueMax: [],
     };
-    let last = { tsMs: 0, totalReq: null, bytesIn: null, bytesOut: null, cpuTimeSec: null };
+	    let last = { tsMs: 0, totalReq: null, bytesIn: null, bytesOut: null, cpuTimeSec: null };
+	    let tickBusy = false;
 
-    function push(arr, v) {
-      arr.push(v);
-      while (arr.length > MAX_POINTS) arr.shift();
-    }
+	    function push(arr, v) {
+	      arr.push(v);
+	      while (arr.length > MAX_POINTS) arr.shift();
+	    }
+
+	    function renderCharts() {
+	      drawSeries(qs('c_qps'), series.qps, {name:'QPS', color:'#2563eb', min:0, tsMs:series.tsMs});
+	      drawSeries(qs('c_conns'), series.conns, {name:'活跃连接', color:'#16a34a', min:0, tsMs:series.tsMs});
+	      drawSeries(qs('c_p99'), series.p99, {name:'P99', unit:'ms', color:'#9333ea', min:0, tsMs:series.tsMs});
+	      drawSeries(qs('c_cpu'), series.cpu, {name:'CPU', unit:'%', color:'#0f766e', min:0, tsMs:series.tsMs});
+	      // bandwidth: overlay in/out
+	      (function drawBw(){
+	        const c = qs('c_bw');
+	        const ctx = c.getContext('2d');
+	        const {w, h, dpr} = fitCanvas(c);
+	        ctx.clearRect(0,0,w,h);
+	        ctx.fillStyle = '#ffffff';
+	        ctx.fillRect(0,0,w,h);
+	        const pad = 28;
+	        const x0 = pad, y0 = pad, x1 = w - pad, y1 = h - pad;
+	        ctx.strokeStyle = '#e5e7eb';
+	        ctx.lineWidth = 1;
+	        ctx.strokeRect(x0, y0, x1-x0, y1-y0);
+	        const a = series.bwInKb, b = series.bwOutKb;
+	        const n = Math.max(a.length, b.length);
+	        if (n === 0) {
+	          ctx.fillStyle = '#6b7280';
+	          ctx.font = '12px sans-serif';
+	          ctx.fillText('暂无数据', x0 + 8, y0 + 18);
+	          return;
+	        }
+	        const vals = a.concat(b);
+	        let ymin = 0, ymax = 0;
+	        for (const v of vals) { if (v > ymax) ymax = v; }
+	        if (ymax - ymin < 1e-9) ymax = ymin + 1;
+	        const sx = (n <= 1) ? 1 : (x1 - x0) / (n - 1);
+	        const sy = (y1 - y0) / (ymax - ymin);
+	        const X = (i) => x0 + i * sx;
+	        const Y = (v) => y1 - (v - ymin) * sy;
+	        ctx.fillStyle = '#6b7280';
+	        ctx.font = '11px sans-serif';
+	        const fmt = (v) => (Math.abs(v) >= 100 ? String(Math.round(v)) : (Math.round(v*100)/100).toFixed(2));
+	        ctx.fillText(fmt(ymax), 6, y0 + 10);
+	        ctx.fillText(fmt(ymin), 6, y1);
+	        function strokeLine(arr, color) {
+	          ctx.strokeStyle = color;
+	          ctx.lineWidth = 2;
+	          ctx.beginPath();
+	          for (let i = 0; i < arr.length; i++) {
+	            const px = X(i + (n - arr.length));
+	            const py = Y(arr[i]);
+	            if (i === 0) ctx.moveTo(px, py);
+	            else ctx.lineTo(px, py);
+	          }
+	          ctx.stroke();
+	        }
+	        strokeLine(a, '#f59e0b'); // in
+	        strokeLine(b, '#ef4444'); // out
+	        ctx.fillStyle = '#111827';
+	        ctx.font = '12px sans-serif';
+	        const lastIn = a.length ? a[a.length-1] : 0;
+	        const lastOut = b.length ? b[b.length-1] : 0;
+	        ctx.fillText('最新：入 ' + fmt(lastIn) + ' KB/s，出 ' + fmt(lastOut) + ' KB/s', x0 + 8, y0 + 18);
+
+	        chartMeta[c.id] = {
+	          dpr,
+	          n,
+	          plot: {x0,y0,x1,y1},
+	          tsRef: series.tsMs,
+	          series: [
+	            {name:'入', ysRef:a, offset: Math.max(0, n - a.length), unit:'KB/s', fmtFn: (v) => (v === null || v === undefined) ? '-' : fmt(v)},
+	            {name:'出', ysRef:b, offset: Math.max(0, n - b.length), unit:'KB/s', fmtFn: (v) => (v === null || v === undefined) ? '-' : fmt(v)},
+	          ],
+	        };
+	      })();
+	      drawSeries(qs('c_rss'), series.rssMb, {name:'RSS', unit:'MB', color:'#f97316', min:0, tsMs:series.tsMs});
+	      drawSeries(qs('c_gpu'), series.gpuMaxPct, {name:'GPU(最大)', unit:'%', color:'#06b6d4', min:0, max:100, tsMs:series.tsMs});
+	      drawSeries(qs('c_vram'), series.vramMaxPct, {name:'显存(最大)', unit:'%', color:'#0ea5e9', min:0, max:100, tsMs:series.tsMs});
+	      drawSeries(qs('c_queue'), series.queueMax, {name:'队列(最大)', color:'#a855f7', min:0, tsMs:series.tsMs});
+	    }
 
     function renderBackends(backends) {
       const tbody = qs('backend_rows');
@@ -715,11 +792,13 @@ static std::string DashboardHtml() {
       }
     }
 
-    async function tick() {
-      try {
-        const r = await fetch("/stats", { cache: "no-store" });
-        const j = await r.json();
-        const nowMs = Date.now();
+	    async function tick() {
+	      if (tickBusy) return;
+	      tickBusy = true;
+	      try {
+	        const r = await fetch("/stats", { cache: "no-store" });
+	        const j = await r.json();
+	        const nowMs = Date.now();
         document.getElementById("active").textContent = fmtNum(j.active_connections);
         document.getElementById("total").textContent = fmtNum(j.total_requests);
 
@@ -728,19 +807,24 @@ static std::string DashboardHtml() {
         let bwInKb = null;
         let bwOutKb = null;
         let cpuPct = null;
-        const dt = (last.tsMs > 0) ? Math.max(1e-3, (nowMs - last.tsMs) / 1000.0) : null;
-        if (dt && typeof j.total_requests === 'number' && typeof last.totalReq === 'number') {
-          instQps = Math.max(0, (j.total_requests - last.totalReq) / dt);
-        }
-        if (dt && typeof j.bytes_in === 'number' && typeof last.bytesIn === 'number') {
-          bwInKb = Math.max(0, (j.bytes_in - last.bytesIn) / dt / 1024.0);
-        }
-        if (dt && typeof j.bytes_out === 'number' && typeof last.bytesOut === 'number') {
-          bwOutKb = Math.max(0, (j.bytes_out - last.bytesOut) / dt / 1024.0);
-        }
-        if (dt && j.process && typeof j.process.cpu_time_sec === 'number' && typeof last.cpuTimeSec === 'number') {
-          cpuPct = Math.max(0, ((j.process.cpu_time_sec - last.cpuTimeSec) / dt) * 100.0);
-        }
+	        const dt = (last.tsMs > 0) ? Math.max(0.0, (nowMs - last.tsMs) / 1000.0) : null;
+	        const dtOk = (dt !== null && dt >= 0.5);
+	        if (dt && typeof j.total_requests === 'number' && typeof last.totalReq === 'number') {
+	          if (dtOk) instQps = Math.max(0, (j.total_requests - last.totalReq) / dt);
+	        }
+	        if (dt && typeof j.bytes_in === 'number' && typeof last.bytesIn === 'number') {
+	          if (dtOk) bwInKb = Math.max(0, (j.bytes_in - last.bytesIn) / dt / 1024.0);
+	        }
+	        if (dt && typeof j.bytes_out === 'number' && typeof last.bytesOut === 'number') {
+	          if (dtOk) bwOutKb = Math.max(0, (j.bytes_out - last.bytesOut) / dt / 1024.0);
+	        }
+	        if (dt && j.process && typeof j.process.cpu_time_sec === 'number' && typeof last.cpuTimeSec === 'number') {
+	          if (dtOk) {
+	            const dCpu = (j.process.cpu_time_sec - last.cpuTimeSec);
+	            if (dCpu >= 0) cpuPct = Math.max(0, (dCpu / dt) * 100.0);
+	          }
+	        }
+	        if (cpuPct !== null && cpuPct > 100000) cpuPct = null;
         last = {
           tsMs: nowMs,
           totalReq: (typeof j.total_requests === 'number') ? j.total_requests : last.totalReq,
@@ -769,123 +853,56 @@ static std::string DashboardHtml() {
           document.getElementById("proc").textContent = "-";
         }
 
-	        // Push chart points.
-	        push(series.tsMs, nowMs);
-	        push(series.conns, (typeof j.active_connections === 'number') ? j.active_connections : 0);
-	        push(series.qps, (instQps === null) ? 0 : instQps);
-        const p99 = (j.latency_ms && typeof j.latency_ms.p99_ms === 'number') ? j.latency_ms.p99_ms : 0;
-        push(series.p99, p99);
-        push(series.cpu, (cpuPct === null) ? 0 : cpuPct);
-        push(series.bwInKb, (bwInKb === null) ? 0 : bwInKb);
-        push(series.bwOutKb, (bwOutKb === null) ? 0 : bwOutKb);
-        const rssMb = (j.process && typeof j.process.rss_bytes === 'number') ? (j.process.rss_bytes / 1024.0 / 1024.0) : 0;
-        push(series.rssMb, rssMb);
+	        // Push chart points only when dt is sane, otherwise rates can spike massively.
+	        if (dtOk) {
+	          // Push chart points.
+	          push(series.tsMs, nowMs);
+	          push(series.conns, (typeof j.active_connections === 'number') ? j.active_connections : 0);
+	          push(series.qps, (instQps === null) ? 0 : instQps);
+	          const p99 = (j.latency_ms && typeof j.latency_ms.p99_ms === 'number') ? j.latency_ms.p99_ms : 0;
+	          push(series.p99, p99);
+	          push(series.cpu, (cpuPct === null) ? 0 : cpuPct);
+	          push(series.bwInKb, (bwInKb === null) ? 0 : bwInKb);
+	          push(series.bwOutKb, (bwOutKb === null) ? 0 : bwOutKb);
+	          const rssMb = (j.process && typeof j.process.rss_bytes === 'number') ? (j.process.rss_bytes / 1024.0 / 1024.0) : 0;
+	          push(series.rssMb, rssMb);
 
-        // backend-derived AI metrics
-        let gpuMax = 0.0;
-        let vramMax = 0.0;
-        let qMax = 0.0;
-        if (Array.isArray(j.backends)) {
-          for (const b of j.backends) {
-            if (b && b.gpu_present && typeof b.gpu_util === 'number' && b.gpu_util >= 0) {
-              gpuMax = Math.max(gpuMax, b.gpu_util * 100.0);
-            }
-            if (b && b.gpu_present && typeof b.vram_total_mb === 'number' && b.vram_total_mb > 0 && typeof b.vram_used_mb === 'number') {
-              vramMax = Math.max(vramMax, (b.vram_used_mb / b.vram_total_mb) * 100.0);
-            }
-            if (b && (b.queue_len_external || typeof b.queue_len === 'number') && typeof b.queue_len === 'number') {
-              qMax = Math.max(qMax, b.queue_len);
-            }
-          }
-        }
-        push(series.gpuMaxPct, gpuMax);
-        push(series.vramMaxPct, vramMax);
-        push(series.queueMax, qMax);
+	          // backend-derived AI metrics
+	          let gpuMax = 0.0;
+	          let vramMax = 0.0;
+	          let qMax = 0.0;
+	          if (Array.isArray(j.backends)) {
+	            for (const b of j.backends) {
+	              if (b && b.gpu_present && typeof b.gpu_util === 'number' && b.gpu_util >= 0) {
+	                gpuMax = Math.max(gpuMax, b.gpu_util * 100.0);
+	              }
+	              if (b && b.gpu_present && typeof b.vram_total_mb === 'number' && b.vram_total_mb > 0 && typeof b.vram_used_mb === 'number') {
+	                vramMax = Math.max(vramMax, (b.vram_used_mb / b.vram_total_mb) * 100.0);
+	              }
+	              if (b && (b.queue_len_external || typeof b.queue_len === 'number') && typeof b.queue_len === 'number') {
+	                qMax = Math.max(qMax, b.queue_len);
+	              }
+	            }
+	          }
+	          push(series.gpuMaxPct, gpuMax);
+	          push(series.vramMaxPct, vramMax);
+	          push(series.queueMax, qMax);
+	        }
 
-	        drawSeries(qs('c_qps'), series.qps, {name:'QPS', color:'#2563eb', min:0, tsMs:series.tsMs});
-	        drawSeries(qs('c_conns'), series.conns, {name:'活跃连接', color:'#16a34a', min:0, tsMs:series.tsMs});
-	        drawSeries(qs('c_p99'), series.p99, {name:'P99', unit:'ms', color:'#9333ea', min:0, tsMs:series.tsMs});
-	        drawSeries(qs('c_cpu'), series.cpu, {name:'CPU', unit:'%', color:'#0f766e', min:0, tsMs:series.tsMs});
-        // bandwidth: overlay in/out
-	        (function drawBw(){
-	          const c = qs('c_bw');
-	          const ctx = c.getContext('2d');
-	          const {w, h, dpr} = fitCanvas(c);
-          ctx.clearRect(0,0,w,h);
-          ctx.fillStyle = '#ffffff';
-          ctx.fillRect(0,0,w,h);
-          const pad = 28;
-          const x0 = pad, y0 = pad, x1 = w - pad, y1 = h - pad;
-          ctx.strokeStyle = '#e5e7eb';
-          ctx.lineWidth = 1;
-          ctx.strokeRect(x0, y0, x1-x0, y1-y0);
-          const a = series.bwInKb, b = series.bwOutKb;
-          const n = Math.max(a.length, b.length);
-          if (n === 0) {
-            ctx.fillStyle = '#6b7280';
-            ctx.font = '12px sans-serif';
-            ctx.fillText('暂无数据', x0 + 8, y0 + 18);
-            return;
-          }
-          const vals = a.concat(b);
-          let ymin = 0, ymax = 0;
-          for (const v of vals) { if (v > ymax) ymax = v; }
-          if (ymax - ymin < 1e-9) ymax = ymin + 1;
-          const sx = (n <= 1) ? 1 : (x1 - x0) / (n - 1);
-          const sy = (y1 - y0) / (ymax - ymin);
-          const X = (i) => x0 + i * sx;
-          const Y = (v) => y1 - (v - ymin) * sy;
-          ctx.fillStyle = '#6b7280';
-          ctx.font = '11px sans-serif';
-          const fmt = (v) => (Math.abs(v) >= 100 ? String(Math.round(v)) : (Math.round(v*100)/100).toFixed(2));
-          ctx.fillText(fmt(ymax), 6, y0 + 10);
-          ctx.fillText(fmt(ymin), 6, y1);
-          function strokeLine(arr, color) {
-            ctx.strokeStyle = color;
-            ctx.lineWidth = 2;
-            ctx.beginPath();
-            for (let i = 0; i < arr.length; i++) {
-              const px = X(i + (n - arr.length));
-              const py = Y(arr[i]);
-              if (i === 0) ctx.moveTo(px, py);
-              else ctx.lineTo(px, py);
-            }
-            ctx.stroke();
-          }
-          strokeLine(a, '#f59e0b'); // in
-          strokeLine(b, '#ef4444'); // out
-          ctx.fillStyle = '#111827';
-          ctx.font = '12px sans-serif';
-	          const lastIn = a.length ? a[a.length-1] : 0;
-	          const lastOut = b.length ? b[b.length-1] : 0;
-	          ctx.fillText('最新：入 ' + fmt(lastIn) + ' KB/s，出 ' + fmt(lastOut) + ' KB/s', x0 + 8, y0 + 18);
-
-	          chartMeta[c.id] = {
-	            dpr,
-	            n,
-	            plot: {x0,y0,x1,y1},
-	            tsRef: series.tsMs,
-	            series: [
-	              {name:'入', ysRef:a, offset: Math.max(0, n - a.length), unit:'KB/s', fmtFn: (v) => (v === null || v === undefined) ? '-' : fmt(v)},
-	              {name:'出', ysRef:b, offset: Math.max(0, n - b.length), unit:'KB/s', fmtFn: (v) => (v === null || v === undefined) ? '-' : fmt(v)},
-	            ],
-	          };
-	        })();
-	        drawSeries(qs('c_rss'), series.rssMb, {name:'RSS', unit:'MB', color:'#f97316', min:0, tsMs:series.tsMs});
-	        drawSeries(qs('c_gpu'), series.gpuMaxPct, {name:'GPU(最大)', unit:'%', color:'#06b6d4', min:0, max:100, tsMs:series.tsMs});
-	        drawSeries(qs('c_vram'), series.vramMaxPct, {name:'显存(最大)', unit:'%', color:'#0ea5e9', min:0, max:100, tsMs:series.tsMs});
-	        drawSeries(qs('c_queue'), series.queueMax, {name:'队列(最大)', color:'#a855f7', min:0, tsMs:series.tsMs});
+	        renderCharts();
 
         renderBackends(j.backends);
 
         document.getElementById("raw").textContent = JSON.stringify(j, null, 2);
-      } catch (e) {
-        document.getElementById("raw").textContent = "错误: " + String(e);
-      }
-    }
+	      } catch (e) {
+	        document.getElementById("raw").textContent = "错误: " + String(e);
+	      } finally {
+	        tickBusy = false;
+	      }
+	    }
 	    tick();
 	    setInterval(tick, 1000);
-	    window.addEventListener('resize', () => tick());
+		    window.addEventListener('resize', () => renderCharts());
 	    ['c_qps','c_conns','c_p99','c_cpu','c_bw','c_rss','c_gpu','c_vram','c_queue'].forEach(installHover);
 	  </script>
 </body>

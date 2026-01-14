@@ -176,9 +176,20 @@ void HistoryStore::SampleOnce() {
     const double cpuNow = ReadProcessCpuTimeSec();
     const auto wallNow = std::chrono::steady_clock::now();
     const double wallSec = std::chrono::duration_cast<std::chrono::duration<double>>(wallNow - lastWall_).count();
-    p.cpuPctSingleCore = (wallSec > 0.0) ? ((cpuNow - lastCpuTimeSec_) / wallSec) * 100.0 : 0.0;
-    lastCpuTimeSec_ = cpuNow;
-    lastWall_ = wallNow;
+    // Guard against extremely small wall interval (timer jitter, manual calls): would inflate cpu% massively.
+    if (wallSec < 0.05) {
+        p.cpuPctSingleCore = 0.0;
+        lastCpuTimeSec_ = cpuNow;
+        lastWall_ = wallNow;
+    } else {
+        double dCpu = cpuNow - lastCpuTimeSec_;
+        if (dCpu < 0.0) dCpu = 0.0;
+        double cpuPct = (dCpu / wallSec) * 100.0;
+        if (cpuPct > 100000.0) cpuPct = 0.0;
+        p.cpuPctSingleCore = cpuPct;
+        lastCpuTimeSec_ = cpuNow;
+        lastWall_ = wallNow;
+    }
 
     // Latency percentiles: reuse Stats json cached to avoid adding new API (simple string search).
     // This is best-effort; if missing, keep zeros.
