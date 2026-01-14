@@ -80,6 +80,7 @@ def main():
     ap.add_argument("--concurrency", type=int, default=200)
     ap.add_argument("--work-ms", type=float, default=300.0)
     ap.add_argument("--strategy", default="gpu", choices=["gpu", "leastqueue", "roundrobin", "rtw", "leastconn", "hash"])
+    ap.add_argument("--mode", default="spread", choices=["spread", "model_affinity"], help="spread: 演示均衡分配；model_affinity: 演示模型亲和")
     args = ap.parse_args()
 
     if not os.path.exists(args.proxy_bin):
@@ -174,12 +175,14 @@ def main():
     def worker_one(req_id: int):
         model = random.choice(models)
         url = f"http://127.0.0.1:{args.proxy_port}/infer?work_ms={args.work_ms}"
-        headers = {"X-Model": model, "X-Request-Id": str(req_id), "Content-Type": "application/json"}
+        headers = {"X-Request-Id": str(req_id), "Content-Type": "application/json"}
+        if args.mode == "model_affinity":
+            headers["X-Model"] = model
         body = (b"{" + b"\"x\":" + (b"1" * 2000) + b"}")  # small payload; work_ms dominates
         t0 = time.time()
         j = http_json(url, method="POST", body=body, headers=headers, timeout=10.0)
         dt = (time.time() - t0) * 1000.0
-        return j.get("backend", "-"), dt, model
+        return j.get("backend", "-"), dt, (model if args.mode == "model_affinity" else "")
 
     # Fire a burst of requests.
     end = time.time() + args.duration
@@ -231,8 +234,11 @@ def main():
         print(f"- {k}: {v}")
     print("")
     print("按模型分布：")
-    for k, v in sorted(by_model.items(), key=lambda kv: (-kv[1], kv[0])):
-        print(f"- {k}: {v}")
+    if args.mode == "model_affinity":
+        for k, v in sorted(by_model.items(), key=lambda kv: (-kv[1], kv[0])):
+            print(f"- {k}: {v}")
+    else:
+        print("- （未启用模型亲和：请求未携带 X-Model）")
 
     print("")
     print("提示：打开 dashboard 查看“后端 AI/GPU 指标表格 + GPU/显存/队列曲线”，它们来自后端 /ai/status 的真实 in-flight 推导。")
