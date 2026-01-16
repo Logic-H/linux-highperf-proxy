@@ -1,0 +1,95 @@
+{
+  "backend": {
+    "port": 41147
+  },
+  "haproxy": {
+    "bin": "/home/huazi/Workspace/Projects/linux\u5927\u4f5c\u4e1a/third_party/haproxy/haproxy",
+    "port": 40457,
+    "version": "2.9.12"
+  },
+  "params": {
+    "concurrency": 500,
+    "timeout": 3.0,
+    "total": 5000
+  },
+  "proxy": {
+    "bin": "/home/huazi/Workspace/Projects/linux\u5927\u4f5c\u4e1a/build/proxy_server",
+    "port": 38685
+  },
+  "python": "3.13.11 (main, Dec  7 2025, 13:01:45) [GCC 15.2.1 20251112]",
+  "results": {
+    "download_1m": {
+      "haproxy": {
+        "bytes_total": 5219811328,
+        "elapsed_s": 13.971988,
+        "failed": 22,
+        "ok": 4978,
+        "p50_ms": 1300.625283,
+        "p90_ms": 1971.542001,
+        "p99_ms": 3020.189578,
+        "qps": 356.284308,
+        "total": 5000
+      },
+      "proxy": {
+        "bytes_total": 5242880000,
+        "elapsed_s": 15.659706,
+        "failed": 0,
+        "ok": 5000,
+        "p50_ms": 1384.991927,
+        "p90_ms": 2066.445695,
+        "p99_ms": 3267.97661,
+        "qps": 319.290791,
+        "total": 5000
+      }
+    },
+    "download_4k": {
+      "haproxy": {
+        "bytes_total": 20480000,
+        "elapsed_s": 4.811606,
+        "failed": 0,
+        "ok": 5000,
+        "p50_ms": 243.488979,
+        "p90_ms": 1306.782425,
+        "p99_ms": 2197.477445,
+        "qps": 1039.154047,
+        "total": 5000
+      },
+      "proxy": {
+        "bytes_total": 20451328,
+        "elapsed_s": 4.982396,
+        "failed": 7,
+        "ok": 4993,
+        "p50_ms": 240.089733,
+        "p90_ms": 1324.876018,
+        "p99_ms": 2325.84257,
+        "qps": 1002.12827,
+        "total": 5000
+      }
+    },
+    "small_2b": {
+      "haproxy": {
+        "bytes_total": 10000,
+        "elapsed_s": 4.909243,
+        "failed": 0,
+        "ok": 5000,
+        "p50_ms": 200.380691,
+        "p90_ms": 1295.406075,
+        "p99_ms": 2148.857416,
+        "qps": 1018.486896,
+        "total": 5000
+      },
+      "proxy": {
+        "bytes_total": 10000,
+        "elapsed_s": 4.644577,
+        "failed": 0,
+        "ok": 5000,
+        "p50_ms": 199.916003,
+        "p90_ms": 1293.729205,
+        "p99_ms": 2140.768581,
+        "qps": 1076.524378,
+        "total": 5000
+      }
+    }
+  },
+  "ts": 1767888460.7513118
+}

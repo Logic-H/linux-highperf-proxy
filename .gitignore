@@ -24,12 +24,14 @@ docs/.vitepress/cache/
 
 # --- Organized Directories ---
 logs/
-benchmarks/
 debug/
 
 # --- Benchmark Results ---
 bench_*.json
 bench_out/
+!benchmarks/*.json
+!bench_out/
+!bench_out/*.json
 
 # --- Python ---
 __pycache__/

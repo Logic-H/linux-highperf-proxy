@@ -1,0 +1,34 @@
+{
+  "ts_unix": 1767777771,
+  "host": "127.0.0.1",
+  "port": 8084,
+  "bench": "http_stats",
+  "concurrency": 200,
+  "total": 20000,
+  "timeout_s": 2.5,
+  "hold_s": 2.0,
+  "sample_interval_s": 0.2,
+  "modes": [
+    {
+      "mode": "epoll",
+      "ok": 20000,
+      "failed": 0,
+      "elapsed_s": 8.755208,
+      "qps": 2284.354662,
+      "latency_ms": {
+        "p50_ms": 75.604939,
+        "p90_ms": 92.293574,
+        "p99_ms": 160.973375,
+        "avg_ms": 78.788024
+      },
+      "proc": {
+        "cpu_pct_single_core_avg": 63.815369,
+        "rss_bytes_max": 6844416,
+        "rss_bytes_avg": 6784409,
+        "fd_count_max": 209,
+        "fd_count_avg": 180.95,
+        "sample_count": 40
+      }
+    }
+  ]
+}

@@ -1,0 +1,95 @@
+{
+  "backend": {
+    "port": 46011
+  },
+  "haproxy": {
+    "bin": "/home/huazi/Workspace/Projects/linux\u5927\u4f5c\u4e1a/third_party/haproxy/haproxy",
+    "port": 42065,
+    "version": "2.9.12"
+  },
+  "params": {
+    "concurrency": 200,
+    "timeout": 3.0,
+    "total": 20000
+  },
+  "proxy": {
+    "bin": "/home/huazi/Workspace/Projects/linux\u5927\u4f5c\u4e1a/build/proxy_server",
+    "port": 44309
+  },
+  "python": "3.13.11 (main, Dec  7 2025, 13:01:45) [GCC 15.2.1 20251112]",
+  "results": {
+    "download_1m": {
+      "haproxy": {
+        "bytes_total": 20971520000,
+        "elapsed_s": 55.832709,
+        "failed": 0,
+        "ok": 20000,
+        "p50_ms": 521.059964,
+        "p90_ms": 636.663103,
+        "p99_ms": 826.215124,
+        "qps": 358.212958,
+        "total": 20000
+      },
+      "proxy": {
+        "bytes_total": 20971520000,
+        "elapsed_s": 51.023724,
+        "failed": 0,
+        "ok": 20000,
+        "p50_ms": 476.273087,
+        "p90_ms": 541.694377,
+        "p99_ms": 667.017856,
+        "qps": 391.974523,
+        "total": 20000
+      }
+    },
+    "download_4k": {
+      "haproxy": {
+        "bytes_total": 81920000,
+        "elapsed_s": 13.645629,
+        "failed": 0,
+        "ok": 20000,
+        "p50_ms": 114.058119,
+        "p90_ms": 144.164435,
+        "p99_ms": 196.799186,
+        "qps": 1465.67085,
+        "total": 20000
+      },
+      "proxy": {
+        "bytes_total": 81920000,
+        "elapsed_s": 13.34805,
+        "failed": 0,
+        "ok": 20000,
+        "p50_ms": 111.007459,
+        "p90_ms": 137.546114,
+        "p99_ms": 262.026424,
+        "qps": 1498.346226,
+        "total": 20000
+      }
+    },
+    "small_2b": {
+      "haproxy": {
+        "bytes_total": 40000,
+        "elapsed_s": 12.790455,
+        "failed": 0,
+        "ok": 20000,
+        "p50_ms": 109.906103,
+        "p90_ms": 131.023014,
+        "p99_ms": 233.967989,
+        "qps": 1563.666089,
+        "total": 20000
+      },
+      "proxy": {
+        "bytes_total": 40000,
+        "elapsed_s": 12.757793,
+        "failed": 0,
+        "ok": 20000,
+        "p50_ms": 110.179922,
+        "p90_ms": 134.405187,
+        "p99_ms": 216.549196,
+        "qps": 1567.669224,
+        "total": 20000
+      }
+    }
+  },
+  "ts": 1767887954.684963
+}

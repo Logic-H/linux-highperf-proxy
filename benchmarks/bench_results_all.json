@@ -1,0 +1,65 @@
+{
+  "ts_unix": 1767773716,
+  "host": "127.0.0.1",
+  "port": 8084,
+  "bench": "http_stats",
+  "concurrency": 20,
+  "total": 100,
+  "timeout_s": 2.0,
+  "hold_s": 2.0,
+  "sample_interval_s": 0.2,
+  "modes": [
+    {
+      "mode": "epoll",
+      "ok": 100,
+      "failed": 0,
+      "elapsed_s": 0.043367,
+      "qps": 2305.888039,
+      "latency_ms": {
+        "p50_ms": 7.262301,
+        "p90_ms": 8.89203,
+        "p99_ms": 9.648042,
+        "avg_ms": 7.297061
+      }
+    },
+    {
+      "mode": "poll",
+      "ok": 100,
+      "failed": 0,
+      "elapsed_s": 0.038919,
+      "qps": 2569.415985,
+      "latency_ms": {
+        "p50_ms": 7.063714,
+        "p90_ms": 7.573479,
+        "p99_ms": 8.493883,
+        "avg_ms": 6.721407
+      }
+    },
+    {
+      "mode": "select",
+      "ok": 100,
+      "failed": 0,
+      "elapsed_s": 0.04724,
+      "qps": 2116.863794,
+      "latency_ms": {
+        "p50_ms": 8.318295,
+        "p90_ms": 10.196383,
+        "p99_ms": 11.55242,
+        "avg_ms": 8.226978
+      }
+    },
+    {
+      "mode": "uring",
+      "ok": 100,
+      "failed": 0,
+      "elapsed_s": 0.038983,
+      "qps": 2565.231004,
+      "latency_ms": {
+        "p50_ms": 7.054795,
+        "p90_ms": 7.695514,
+        "p99_ms": 8.189368,
+        "avg_ms": 6.775874
+      }
+    }
+  ]
+}

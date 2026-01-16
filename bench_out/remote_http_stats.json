@@ -1,0 +1,22 @@
+{
+  "ts_unix": 1768374402,
+  "host": "10.200.98.98",
+  "port": 8080,
+  "bench": "http_stats",
+  "concurrency": 400,
+  "total": 20000,
+  "timeout_s": 2.0,
+  "hold_s": 2.0,
+  "payload_bytes": 8388608,
+  "sample_interval_s": 0.2,
+  "modes": [
+    {
+      "mode": "epoll",
+      "ok": 0,
+      "failed": 20000,
+      "elapsed_s": 8.0,
+      "qps": 0.0,
+      "latency_ms": {}
+    }
+  ]
+}

@@ -1,0 +1,89 @@
+{
+  "backend": {
+    "port": 34263
+  },
+  "haproxy": {
+    "bin": "/home/huazi/Workspace/Projects/linux\u5927\u4f5c\u4e1a/third_party/haproxy/haproxy",
+    "port": 42057,
+    "version": "2.9.12"
+  },
+  "params": {
+    "concurrency": 50,
+    "timeout": 3.0,
+    "total": 10000
+  },
+  "proxy": {
+    "bin": "/home/huazi/Workspace/Projects/linux\u5927\u4f5c\u4e1a/build/proxy_server",
+    "port": 45249
+  },
+  "python": "3.13.11 (main, Dec  7 2025, 13:01:45) [GCC 15.2.1 20251112]",
+  "results": {
+    "download_1m": {
+      "haproxy": {
+        "bytes_total": 10485760000,
+        "elapsed_s": 36.438608,
+        "failed": 0,
+        "ok": 10000,
+        "p50_ms": 167.991877,
+        "p90_ms": 184.404679,
+        "p99_ms": 206.667345,
+        "qps": 274.43419
+      },
+      "proxy": {
+        "bytes_total": 10485760000,
+        "elapsed_s": 30.861337,
+        "failed": 0,
+        "ok": 10000,
+        "p50_ms": 147.340755,
+        "p90_ms": 190.342386,
+        "p99_ms": 212.133236,
+        "qps": 324.030027
+      }
+    },
+    "download_4k": {
+      "haproxy": {
+        "bytes_total": 40960000,
+        "elapsed_s": 6.285769,
+        "failed": 0,
+        "ok": 10000,
+        "p50_ms": 25.194919,
+        "p90_ms": 32.911504,
+        "p99_ms": 51.185679,
+        "qps": 1590.895235
+      },
+      "proxy": {
+        "bytes_total": 40960000,
+        "elapsed_s": 5.914276,
+        "failed": 0,
+        "ok": 10000,
+        "p50_ms": 24.286845,
+        "p90_ms": 32.559453,
+        "p99_ms": 50.67633,
+        "qps": 1690.824008
+      }
+    },
+    "small_2b": {
+      "haproxy": {
+        "bytes_total": 20000,
+        "elapsed_s": 5.726005,
+        "failed": 0,
+        "ok": 10000,
+        "p50_ms": 23.427062,
+        "p90_ms": 27.979289,
+        "p99_ms": 41.79266,
+        "qps": 1746.41823
+      },
+      "proxy": {
+        "bytes_total": 20000,
+        "elapsed_s": 5.651655,
+        "failed": 0,
+        "ok": 10000,
+        "p50_ms": 23.644384,
+        "p90_ms": 28.894958,
+        "p99_ms": 44.988478,
+        "qps": 1769.393212
+      }
+    }
+  },
+  "ts": 1767887551.6843424
+}

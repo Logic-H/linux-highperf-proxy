@@ -1,0 +1,28 @@
+{
+  "ts_unix": 1767769570,
+  "host": "127.0.0.1",
+  "port": 8084,
+  "bench": "connect_hold",
+  "concurrency": 200,
+  "total": 400,
+  "timeout_s": 2.0,
+  "hold_s": 0.5,
+  "sample_interval_s": 0.2,
+  "modes": [
+    {
+      "mode": "epoll",
+      "ok": 400,
+      "failed": 0,
+      "elapsed_s": 1.113653,
+      "qps": 359.178224,
+      "proc": {
+        "cpu_pct_single_core_avg": 0.992065,
+        "rss_bytes_max": 5996544,
+        "rss_bytes_avg": 5813589,
+        "fd_count_max": 209,
+        "fd_count_avg": 175.666667,
+        "sample_count": 6
+      }
+    }
+  ]
+}

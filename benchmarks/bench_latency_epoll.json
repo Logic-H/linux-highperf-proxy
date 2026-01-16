@@ -1,0 +1,21 @@
+{
+  "ts_unix": 1767777735,
+  "host": "127.0.0.1",
+  "port": 8084,
+  "bench": "http_stats",
+  "concurrency": 300,
+  "total": 30000,
+  "timeout_s": 2.5,
+  "hold_s": 2.0,
+  "sample_interval_s": 0.2,
+  "modes": [
+    {
+      "mode": "epoll",
+      "ok": 0,
+      "failed": 30000,
+      "elapsed_s": 8.0,
+      "qps": 0.0,
+      "latency_ms": {}
+    }
+  ]
+}
